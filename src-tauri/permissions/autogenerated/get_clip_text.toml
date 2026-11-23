@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-clip-text"
+description = "Enables the get_clip_text command without any pre-configured scope."
+commands.allow = ["get_clip_text"]
+
+[[permission]]
+identifier = "deny-get-clip-text"
+description = "Denies the get_clip_text command without any pre-configured scope."
+commands.deny = ["get_clip_text"]

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Clipboard shelf overlay</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid rgba(0,113,227,0.6);outline-offset:2px}
+input::placeholder{color:inherit;opacity:0.62}
+.shelf::-webkit-scrollbar{height:0}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; position: relative; overflow: hidden; background: {{t.wall}}; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 13px; color: {{t.label}}; -webkit-font-smoothing: antialiased">
+
+  <div aria-hidden="true" style="position: absolute; left: 220px; right: 220px; top: 56px; height: 620px; background: {{t.win}}; border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,0.35), 0 0 0 1px {{t.hair}}; padding: 18px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px">
+    <div style="display: flex; gap: 8px">
+      <div style="width: 12px; height: 12px; border-radius: 6px; background: #FF5F57"></div>
+      <div style="width: 12px; height: 12px; border-radius: 6px; background: #FEBC2E"></div>
+      <div style="width: 12px; height: 12px; border-radius: 6px; background: #28C840"></div>
+    </div>
+    <div style="padding: 28px 60px; display: flex; flex-direction: column; gap: 14px">
+      <div style="height: 26px; width: 360px; background: {{t.line}}; border-radius: 6px"></div>
+      <div style="height: 10px; width: 94%; background: {{t.line}}; border-radius: 5px; margin-top: 10px"></div>
+      <div style="height: 10px; width: 86%; background: {{t.line}}; border-radius: 5px"></div>
+      <div style="height: 10px; width: 90%; background: {{t.line}}; border-radius: 5px"></div>
+      <div style="height: 10px; width: 48%; background: {{t.line}}; border-radius: 5px"></div>
+      <div style="height: 10px; width: 88%; background: {{t.line}}; border-radius: 5px; margin-top: 14px"></div>
+      <div style="height: 10px; width: 70%; background: {{t.line}}; border-radius: 5px"></div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 12px; right: 12px; bottom: 12px; border-radius: 28px; background: {{t.panel}}; -webkit-backdrop-filter: blur(48px) saturate(180%); backdrop-filter: blur(48px) saturate(180%); border: 1px solid {{t.panelBd}}; box-shadow: 0 24px 70px rgba(0,0,0,0.38); display: flex; flex-direction: column; overflow: hidden">
+
+    <div style="display: flex; align-items: center; gap: 14px; padding: 16px 20px 12px">
+      <div style="display: flex; align-items: center; gap: 8px; background: {{t.field}}; border-radius: 10px; padding: 0 10px; height: 36px; width: 280px; box-sizing: border-box; color: {{t.sec}}">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search clipboard history</label>
+        <input id="q" type="text" value="{{ query }}" onChange="{{ onQuery }}" placeholder="Search" style="flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: {{t.label}}; font-family: inherit; font-size: 14px; height: 32px">
+      </div>
+
+      <div style="display: flex; background: {{t.field}}; border-radius: 10px; padding: 2px; height: 36px; box-sizing: border-box">
+        <sc-for list="{{ lists }}" as="l" hint-placeholder-count="2">
+          <button type="button" onClick="{{ l.pick }}" aria-pressed="{{ l.on }}" style="min-width: 84px; padding: 0 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; background: {{l.bg}}; box-shadow: {{l.shadow}}; color: {{t.label}}">{{ l.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="width: 1px; height: 20px; background: {{t.hair}}"></div>
+
+      <div style="display: flex; align-items: center; gap: 2px">
+        <sc-for list="{{ kinds }}" as="k" hint-placeholder-count="7">
+          <button type="button" onClick="{{ k.pick }}" aria-pressed="{{ k.on }}" style="height: 30px; padding: 0 12px; border-radius: 15px; border: none; background: {{k.bg}}; color: {{k.fg}}; font-size: 13px; font-weight: 500">{{ k.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="flex: 1"></div>
+      <div style="font-size: 12px; color: {{t.sec}}">{{ resultLabel }}</div>
+      <button type="button" aria-label="More options" style="width: 36px; height: 36px; border: none; border-radius: 18px; background: {{t.field}}; color: {{t.label}}; display: flex; align-items: center; justify-content: center">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg>
+      </button>
+    </div>
+
+    <div class="shelf" style="display: flex; gap: 14px; padding: 6px 20px 16px; overflow-x: auto; height: 240px; box-sizing: content-box">
+      <sc-for list="{{ items }}" as="item" hint-placeholder-count="6">
+        <div style="flex: none; width: 226px; height: 236px; box-sizing: border-box; background: {{t.card}}; border-radius: 18px; box-shadow: 0 0 0 {{item.ringW}} {{item.ring}}, 0 1px 3px rgba(0,0,0,0.1), 0 6px 16px rgba(0,0,0,0.06); display: flex; flex-direction: column; overflow: hidden">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 10px 6px 0 12px; height: 32px; flex: none">
+            <div aria-hidden="true" style="width: 20px; height: 20px; border-radius: 6px; background: {{item.tile}}; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{ item.initial }}</div>
+            <div style="font-size: 12px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ item.app }}</div>
+            <button type="button" onClick="{{ item.togglePin }}" aria-label="{{ item.pinLabel }}" aria-pressed="{{ item.pinned }}" style="width: 32px; height: 32px; border: none; background: transparent; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: {{item.pinColor}}">
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="{{ item.pinFill }}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"></path><path d="M12 14v7"></path></svg>
+            </button>
+          </div>
+          <button type="button" onClick="{{ item.pick }}" aria-pressed="{{ item.selected }}" style="flex: 1; min-height: 0; background: transparent; border: none; padding: 8px 12px 10px; text-align: left; color: {{t.label}}; display: flex; flex-direction: column; gap: 8px; overflow: hidden">
+            <sc-if value="{{ item.isColor }}" hint-placeholder-val="{{ false }}">
+              <div style="width: 100%; height: 92px; border-radius: 10px; background: {{item.hex}}; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08); flex: none"></div>
+            </sc-if>
+            <sc-if value="{{ item.isImage }}" hint-placeholder-val="{{ false }}">
+              <div style="width: 100%; height: 92px; border-radius: 10px; background: {{t.sub}}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: {{t.sec}}; font-size: 11px; flex: none">
+                <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M3 16l5-5 4 4 3-3 6 6"></path><circle cx="15.5" cy="8.5" r="1.5"></circle></svg>
+                <span>Image preview</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ item.hasHead }}" hint-placeholder-val="{{ true }}">
+              <div style="font-size: 13px; font-weight: 600; line-height: 1.3">{{ item.head }}</div>
+            </sc-if>
+            <div style="font-family: {{item.font}}; font-size: {{item.size}}; line-height: 1.45; color: {{item.bodyColor}}; white-space: pre-wrap; overflow: hidden; word-break: break-word; flex: 1; min-height: 0; width: 100%">{{ item.body }}</div>
+            <div style="display: flex; justify-content: space-between; width: 100%; font-size: 11px; color: {{t.sec}}; flex: none">
+              <span>{{ item.meta }}</span>
+              <span>{{ item.key }}</span>
+            </div>
+          </button>
+        </div>
+      </sc-for>
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: {{t.sec}}; font-size: 13px">
+          <div style="color: {{t.label}}; font-size: 17px; font-weight: 600">No Results</div>
+          <div>Try a different search, or choose All.</div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 20px; height: 56px; border-top: 1px solid {{t.hair}}">
+      <div style="font-size: 12px; color: {{t.sec}}; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 620px">{{ status }}</div>
+      <div style="flex: 1"></div>
+      <button type="button" onClick="{{ pastePlain }}" style="height: 32px; padding: 0 14px; border: none; border-radius: 16px; background: {{t.field}}; color: {{t.label}}; font-size: 13px; font-weight: 500">Paste as Plain Text</button>
+      <button type="button" onClick="{{ paste }}" style="height: 32px; padding: 0 18px; border: none; border-radius: 16px; background: {{accent}}; color: #FFFFFF; font-size: 13px; font-weight: 600">Paste</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"appearance":{"editor":"enum","options":["Light","Dark"],"default":"Light"},"accent":{"editor":"color","default":"#0071E3","options":["#0071E3","#8944AB","#C93A6B","#5E5E63"]},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { query: '', kind: 'all', list: 'history', selected: 'c1', pinned: { c3: true, c6: true }, pasted: null };
+  }
+  data() {
+    return [
+      { id: 'c1', kind: 'text', app: 'Notes', tile: '#A86B00', when: 'Now', body: 'Ship the clipboard watcher behind a flag first, then turn on image capture once memory use looks sane.' },
+      { id: 'c2', kind: 'link', app: 'Safari', tile: '#0A66C2', when: '2 min ago', head: 'NSPasteboard — Apple Developer', body: 'developer.apple.com/documentation/appkit/nspasteboard' },
+      { id: 'c3', kind: 'code', app: 'Xcode', tile: '#1558B0', when: '8 min ago', body: 'let pb = NSPasteboard.general\nif pb.changeCount != last {\n  last = pb.changeCount\n  store(pb.pasteboardItems)\n}' },
+      { id: 'c4', kind: 'color', app: 'Figma', tile: '#7A3EC8', when: '14 min ago', hex: '#34C759', body: '#34C759' },
+      { id: 'c5', kind: 'image', app: 'Screenshot', tile: '#4A4A4F', when: '31 min ago', body: 'PNG · 1284 × 720 · 412 KB' },
+      { id: 'c6', kind: 'text', app: 'Mail', tile: '#0B6FD3', when: '1 hr ago', head: 'Email signature', body: 'Thanks,\n[YOUR NAME]\n[YOUR ROLE]' },
+      { id: 'c7', kind: 'file', app: 'Finder', tile: '#1777C9', when: '2 hr ago', head: 'roadmap-q1.pdf', body: 'Documents › Planning\nPDF · 2.1 MB' },
+      { id: 'c8', kind: 'code', app: 'Terminal', tile: '#2B2B2E', when: '3 hr ago', body: 'git log --oneline --graph --decorate -20' },
+      { id: 'c9', kind: 'link', app: 'Safari', tile: '#0A66C2', when: 'Yesterday', head: 'Sparkle: updates for Mac apps', body: 'sparkle-project.org' },
+      { id: 'c10', kind: 'color', app: 'Xcode', tile: '#1558B0', when: 'Yesterday', hex: '#FF9F0A', body: '#FF9F0A' }
+    ];
+  }
+  renderVals() {
+    const accent = this.props.accent ?? '#0071E3';
+    const dark = (this.props.appearance ?? 'Light') === 'Dark';
+    const t = dark ? {
+      label: '#F5F5F7', sec: '#AEAEB2', panel: 'rgba(36,36,38,0.72)', panelBd: 'rgba(255,255,255,0.16)',
+      card: '#2C2C2E', field: 'rgba(255,255,255,0.1)', segOn: '#636366', hair: 'rgba(255,255,255,0.12)',
+      sub: '#3A3A3C', win: '#1E1E20', line: '#303033',
+      wall: 'radial-gradient(900px 700px at 12% 18%, #3B4FB8, transparent 70%), radial-gradient(900px 700px at 88% 30%, #8A3F86, transparent 70%), radial-gradient(1000px 700px at 50% 100%, #1F6F78, transparent 70%), #10122A'
+    } : {
+      label: '#1D1D1F', sec: '#5E5E63', panel: 'rgba(244,244,246,0.78)', panelBd: 'rgba(255,255,255,0.7)',
+      card: '#FFFFFF', field: 'rgba(0,0,0,0.06)', segOn: '#FFFFFF', hair: 'rgba(0,0,0,0.1)',
+      sub: '#F0F0F2', win: '#FFFFFF', line: '#E8E8EC',
+      wall: 'radial-gradient(900px 700px at 12% 18%, #8FB8FF, transparent 70%), radial-gradient(900px 700px at 88% 30%, #F2A7D0, transparent 70%), radial-gradient(1000px 700px at 50% 100%, #9BE0D2, transparent 70%), #5B7BE0'
+    };
+    const s = this.state;
+    const all = this.data();
+    const names = { text: 'Text', link: 'Link', code: 'Code', color: 'Color', image: 'Image', file: 'File' };
+    const q = s.query.trim().toLowerCase();
+    const shown = all
+      .filter((x) => s.list !== 'pinned' || s.pinned[x.id])
+      .filter((x) => s.kind === 'all' || x.kind === s.kind)
+      .filter((x) => !q || ((x.head || '') + ' ' + x.body + ' ' + x.app).toLowerCase().includes(q));
+    const items = shown.map((x, i) => {
+      const selected = x.id === s.selected;
+      const pinned = !!s.pinned[x.id];
+      const mono = x.kind === 'code';
+      return {
+        ...x, selected, pinned,
+        initial: x.app.charAt(0),
+        meta: names[x.kind] + ' · ' + x.when,
+        key: i < 9 ? '⌘' + (i + 1) : '',
+        ring: selected ? accent : 'transparent',
+        ringW: selected ? '3px' : '0px',
+        isColor: x.kind === 'color', isImage: x.kind === 'image', hasHead: !!x.head,
+        font: mono ? 'ui-monospace, SF Mono, Menlo, monospace' : 'inherit',
+        size: mono ? '12px' : '13px',
+        bodyColor: x.head ? t.sec : t.label,
+        pinFill: pinned ? 'currentColor' : 'none',
+        pinColor: pinned ? accent : t.sec,
+        pinLabel: pinned ? 'Unpin' : 'Pin',
+        pick: () => this.setState({ selected: x.id, pasted: null }),
+        togglePin: () => this.setState({ pinned: { ...s.pinned, [x.id]: !pinned } })
+      };
+    });
+    const lists = [['history', 'History'], ['pinned', 'Pinned']].map(([id, label]) => {
+      const on = id === s.list;
+      return { label, on, bg: on ? t.segOn : 'transparent', shadow: on ? '0 1px 3px rgba(0,0,0,0.18)' : 'none', pick: () => this.setState({ list: id }) };
+    });
+    const kinds = [['all', 'All'], ['text', 'Text'], ['link', 'Links'], ['code', 'Code'], ['image', 'Images'], ['color', 'Colors'], ['file', 'Files']].map(([id, label]) => {
+      const on = id === s.kind;
+      return { label, on, bg: on ? t.field : 'transparent', fg: on ? t.label : t.sec, pick: () => this.setState({ kind: id }) };
+    });
+    const sel = all.find((x) => x.id === s.selected);
+    const selName = sel ? (sel.head || sel.body.split('\n')[0]) : '';
+    const status = s.pasted || (sel ? 'Copied from ' + sel.app + ' · ' + sel.when : 'No Selection');
+    return {
+      accent, t, items, lists, kinds, status,
+      query: s.query,
+      isEmpty: items.length === 0,
+      resultLabel: items.length + (items.length === 1 ? ' item' : ' items'),
+      onQuery: (e) => this.setState({ query: e.target.value }),
+      paste: () => this.setState({ pasted: 'Pasted “' + selName + '”' }),
+      pastePlain: () => this.setState({ pasted: 'Pasted as plain text' })
+    };
+  }
+}
+</script>
+</body>
+</html>

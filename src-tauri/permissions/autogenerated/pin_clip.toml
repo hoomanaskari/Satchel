@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pin-clip"
+description = "Enables the pin_clip command without any pre-configured scope."
+commands.allow = ["pin_clip"]
+
+[[permission]]
+identifier = "deny-pin-clip"
+description = "Denies the pin_clip command without any pre-configured scope."
+commands.deny = ["pin_clip"]

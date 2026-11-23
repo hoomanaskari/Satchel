@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-pinboard"
+description = "Enables the create_pinboard command without any pre-configured scope."
+commands.allow = ["create_pinboard"]
+
+[[permission]]
+identifier = "deny-create-pinboard"
+description = "Denies the create_pinboard command without any pre-configured scope."
+commands.deny = ["create_pinboard"]

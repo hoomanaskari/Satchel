@@ -1,0 +1,18 @@
+[package]
+name = "satchel-core"
+version = "0.1.0"
+description = "Platform-independent core of Satchel: models, classification, privacy rules and storage"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+# SQLite with FTS5, compiled in (`bundled`) so every platform gets the same,
+# current SQLite (3.54.x). `cache` gives `prepare_cached`. Default features are
+# off to skip the wasm FFI backend we do not use.
+rusqlite = { version = "0.43", default-features = false, features = ["bundled", "cache"] }
+# SHA-256 content hash for de-duplication. Collision resistant, so a unique
+# index on the hash is a sound dedup key and duplicates never need a blob
+# re-read. RustCrypto, pure Rust, already in the workspace through Tauri.
+sha2 = "0.11"

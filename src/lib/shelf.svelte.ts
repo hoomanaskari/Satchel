@@ -1,0 +1,566 @@
+// Shelf state and actions. Components read these fields and call these
+// methods; all decisions live here and in the pure modules it uses.
+// Only `$state` fields, getters and methods: no effects, no timers other
+// than the search debounce, which exists only while a search is pending.
+
+import { debounce } from "./debounce";
+import { resultLabel, statusLine } from "./format";
+import type { Api } from "./ipc";
+import type { KeyAction } from "./keyboard";
+import { Pager } from "./paging";
+import type { Filters, KindScope } from "./query";
+import * as sel from "./selection";
+import type { ClipId, ClipKind, ClipSummary, ClipsChanged, Pinboard, PinboardId, Settings } from "./types";
+
+export type ClickMode = "single" | "toggle" | "range";
+
+export interface ShelfOptions {
+  api: Api;
+  pageSize?: number;
+  debounceMs?: number;
+  now?: () => number;
+}
+
+export interface PreviewState {
+  id: ClipId;
+  kind: ClipKind;
+  text: string | null;
+  loading: boolean;
+}
+
+export const PINBOARD_COLORS = ["#FF9F0A", "#0A84FF", "#30D158", "#FF375F", "#BF5AF2", "#64D2FF", "#FFD60A", "#AC8E68"];
+const DEFAULT_PINBOARD = "Pinned";
+
+function message(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export class Shelf {
+  text = $state("");
+  kind = $state<KindScope>("all");
+  pinboardId = $state<PinboardId | null>(null);
+
+  clips = $state.raw<ClipSummary[]>([]);
+  hasMore = $state(false);
+  loading = $state(false);
+  error = $state<string | null>(null);
+
+  pinboards = $state.raw<Pinboard[]>([]);
+  settings = $state.raw<Settings | null>(null);
+  selection = $state.raw<sel.Selection>(sel.empty());
+  firstVisible = $state(0);
+
+  previewOpen = $state(false);
+  preview = $state.raw<PreviewState | null>(null);
+
+  /** Transient status message; cleared by the next selection change. */
+  flash = $state<string | null>(null);
+  /** Reference time for relative times; refreshed on load instead of by a timer. */
+  now = $state(0);
+  visible = $state(true);
+  /** Bumped when the list starts over (new filters); the view scrolls back to the start. */
+  resetTick = $state(0);
+  /** Bumped when the search field should take focus. */
+  focusSearchTick = $state(0);
+
+  private readonly api: Api;
+  private readonly clock: () => number;
+  private readonly pager: Pager;
+  private readonly search;
+  private stale = false;
+  private previewToken = 0;
+
+  constructor(opts: ShelfOptions) {
+    this.api = opts.api;
+    this.clock = opts.now ?? Date.now;
+    this.now = this.clock();
+    this.pager = new Pager((q) => this.api.listClips(q), opts.pageSize ?? 50, () => this.mirror());
+    this.search = debounce(() => void this.reload(), opts.debounceMs ?? 40);
+  }
+
+  // ---- derived ----
+
+  get filters(): Filters {
+    return { text: this.text, kind: this.kind, pinboardId: this.pinboardId };
+  }
+
+  get order(): ClipId[] {
+    return this.clips.map((c) => c.id);
+  }
+
+  get selectedClips(): ClipSummary[] {
+    const ids = new Set(this.selection.ids);
+    return this.clips.filter((c) => ids.has(c.id));
+  }
+
+  get focusClip(): ClipSummary | null {
+    const f = this.selection.focus;
+    return f == null ? null : (this.clips.find((c) => c.id === f) ?? null);
+  }
+
+  get status(): string {
+    return this.flash ?? this.error ?? statusLine(this.selectedClips, this.now);
+  }
+
+  get resultLabel(): string {
+    return resultLabel(this.clips.length, this.hasMore);
+  }
+
+  get isEmpty(): boolean {
+    return !this.loading && this.clips.length === 0;
+  }
+
+  get activePinboard(): Pinboard | null {
+    return this.pinboards.find((p) => p.id === this.pinboardId) ?? null;
+  }
+
+  get pasteOnSelect(): boolean {
+    return this.settings?.pasteOnSelect ?? true;
+  }
+
+  // ---- lifecycle ----
+
+  async init(): Promise<() => void> {
+    const stops = await Promise.all([
+      this.api.onClipsChanged((p) => void this.onClipsChanged(p)),
+      this.api.onPinboardsChanged(() => void this.onPinboardsChanged()),
+      this.api.onShelfShown(() => void this.onShown()),
+      this.api.onSettingsChanged((s) => (this.settings = s)),
+    ]);
+    await Promise.all([this.loadSettings(), this.loadPinboards(), this.reload()]);
+    return () => {
+      this.search.cancel();
+      for (const stop of stops) stop();
+    };
+  }
+
+  setVisible(v: boolean): void {
+    this.visible = v;
+    if (!v) this.search.cancel();
+  }
+
+  async onShown(): Promise<void> {
+    this.visible = true;
+    this.search.cancel();
+    this.text = "";
+    this.previewOpen = false;
+    this.preview = null;
+    this.flash = null;
+    this.stale = false;
+    this.focusSearchTick++;
+    await this.reload();
+  }
+
+  // ---- loading ----
+
+  private mirror(): void {
+    this.clips = this.pager.items;
+    this.hasMore = this.pager.hasMore;
+    this.loading = this.pager.loading;
+    this.error = this.pager.error;
+  }
+
+  private async loadSettings(): Promise<void> {
+    try {
+      this.settings = await this.api.getSettings();
+    } catch (e) {
+      this.flash = message(e);
+    }
+  }
+
+  private async loadPinboards(): Promise<void> {
+    try {
+      this.pinboards = await this.api.listPinboards();
+    } catch (e) {
+      this.flash = message(e);
+    }
+  }
+
+  /** Start the list over for the current filters and select the first clip. */
+  async reload(): Promise<void> {
+    this.search.cancel();
+    this.now = this.clock();
+    this.resetTick++;
+    this.firstVisible = 0;
+    if (await this.pager.reset(this.filters)) {
+      this.setSelection(this.clips.length ? sel.single(this.clips[0].id) : sel.empty());
+    }
+  }
+
+  /** Reload in place after a change, keeping the selection where possible. */
+  private async refresh(): Promise<void> {
+    this.now = this.clock();
+    if (await this.pager.refresh()) this.setSelection(sel.prune(this.selection, this.order), false);
+  }
+
+  async loadMoreIfNeeded(renderedEnd: number): Promise<void> {
+    if (this.pager.wantsMore(renderedEnd)) await this.pager.loadMore();
+  }
+
+  /** Run a pending search now (tests, and Return pressed right after typing). */
+  async flushSearch(): Promise<void> {
+    if (this.search.pending()) await this.reload();
+  }
+
+  // ---- filters ----
+
+  setText(v: string): void {
+    this.text = v;
+    this.search();
+  }
+
+  setKind(k: KindScope): Promise<void> {
+    this.kind = k;
+    return this.reload();
+  }
+
+  setTab(id: PinboardId | null): Promise<void> {
+    this.pinboardId = id;
+    return this.reload();
+  }
+
+  setFirstVisible(i: number): void {
+    this.firstVisible = i;
+  }
+
+  // ---- selection ----
+
+  private setSelection(s: sel.Selection, clearFlash = true): void {
+    const prevFocus = this.selection.focus;
+    this.selection = s;
+    if (clearFlash) this.flash = null;
+    if (this.previewOpen && s.focus !== prevFocus) void this.loadPreview();
+  }
+
+  select(id: ClipId, mode: ClickMode): void {
+    const s =
+      mode === "toggle"
+        ? sel.toggle(this.selection, id)
+        : mode === "range"
+          ? sel.range(this.selection, id, this.order)
+          : sel.single(id);
+    this.setSelection(s);
+  }
+
+  move(delta: number, extend: boolean): void {
+    this.setSelection(sel.move(this.selection, delta, this.order, extend));
+  }
+
+  edge(end: boolean): void {
+    const order = this.order;
+    if (order.length) this.setSelection(sel.single(end ? order[order.length - 1] : order[0]));
+  }
+
+  selectAll(): void {
+    this.setSelection(sel.all(this.order, this.selection.focus));
+  }
+
+  // ---- clip actions ----
+
+  private async attempt(fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+    } catch (e) {
+      this.flash = message(e);
+    }
+  }
+
+  private selectedIds(): ClipId[] {
+    return sel.ordered(this.selection, this.order);
+  }
+
+  async paste(plain: boolean): Promise<void> {
+    await this.flushSearch();
+    const ids = this.selectedIds();
+    if (ids.length === 0) return;
+    await this.attempt(async () => {
+      if (!this.pasteOnSelect) {
+        // No multi-copy command exists; the focused clip is copied.
+        await this.api.copyClip(this.selection.focus ?? ids[0], plain);
+        await this.api.hideShelf();
+      } else if (ids.length > 1) {
+        await this.api.pasteClips(ids, plain);
+      } else {
+        await this.api.pasteClip(ids[0], plain);
+      }
+      // Seen only where the window stays up (browser development); Rust hides the shelf.
+      const what = !this.pasteOnSelect ? "Copied" : ids.length > 1 ? `Pasted ${ids.length} clips` : "Pasted";
+      this.flash = plain ? `${what} as plain text` : what;
+      this.afterHide();
+    });
+  }
+
+  async pasteNth(n: number, plain: boolean): Promise<void> {
+    const clip = this.clips[this.firstVisible + n - 1];
+    if (!clip) return;
+    this.setSelection(sel.single(clip.id));
+    await this.paste(plain);
+  }
+
+  async copy(plain: boolean): Promise<void> {
+    const id = this.selection.focus;
+    if (id == null) return;
+    await this.attempt(async () => {
+      await this.api.copyClip(id, plain);
+      this.flash = "Copied to the clipboard";
+    });
+  }
+
+  async close(): Promise<void> {
+    this.search.cancel();
+    await this.attempt(() => this.api.hideShelf());
+    this.afterHide();
+  }
+
+  private afterHide(): void {
+    this.previewOpen = false;
+    this.preview = null;
+    // Rust hides the window; in a plain browser (mock) nothing hides.
+    if (!this.api.isMock?.()) this.setVisible(false);
+  }
+
+  private async defaultPinboard(): Promise<Pinboard | null> {
+    if (this.activePinboard) return this.activePinboard;
+    if (this.pinboards.length) return [...this.pinboards].sort((a, b) => a.position - b.position)[0];
+    const p = await this.api.createPinboard(DEFAULT_PINBOARD, PINBOARD_COLORS[0]);
+    this.pinboards = [...this.pinboards, p];
+    return p;
+  }
+
+  /** Cmd+P: pin the selection (or `ids`) to the open pinboard, else the first; unpin if all are pinned there. */
+  async togglePin(ids?: ClipId[]): Promise<void> {
+    const want = ids ? new Set(ids) : null;
+    const targets = want ? this.clips.filter((c) => want.has(c.id)) : this.selectedClips;
+    if (targets.length === 0) return;
+    await this.attempt(async () => {
+      const board = await this.defaultPinboard();
+      if (!board) return;
+      const unpin = targets.every((c) => c.pinboardIds.includes(board.id));
+      await this.setMembership(
+        targets.map((c) => c.id),
+        board.id,
+        !unpin,
+      );
+    });
+  }
+
+  /** Toggle one clip in one pinboard (card menu). */
+  async togglePinboard(clipId: ClipId, boardId: PinboardId): Promise<void> {
+    const clip = this.clips.find((c) => c.id === clipId);
+    if (!clip) return;
+    await this.attempt(() => this.setMembership([clipId], boardId, !clip.pinboardIds.includes(boardId)));
+  }
+
+  private async setMembership(ids: ClipId[], boardId: PinboardId, pin: boolean): Promise<void> {
+    for (const id of ids) {
+      const clip = this.clips.find((c) => c.id === id);
+      if (!clip || clip.pinboardIds.includes(boardId) === pin) continue;
+      if (pin) await this.api.pinClip(id, boardId);
+      else await this.api.unpinClip(id, boardId);
+      const pinboardIds = pin ? [...clip.pinboardIds, boardId] : clip.pinboardIds.filter((b) => b !== boardId);
+      this.pager.patch(id, { pinboardIds });
+    }
+    if (!pin && this.pinboardId === boardId) this.removeLocally(ids);
+    const board = this.pinboards.find((p) => p.id === boardId);
+    const what = ids.length === 1 ? "Clip" : `${ids.length} clips`;
+    this.flash = `${what} ${pin ? "pinned to" : "removed from"} ${board?.name ?? "pinboard"}`;
+  }
+
+  private removeLocally(ids: ClipId[]): void {
+    const order = this.order;
+    const next = sel.afterRemoval(this.selection, ids, order);
+    this.pager.remove(ids);
+    this.setSelection(next);
+  }
+
+  async deleteSelected(): Promise<void> {
+    const ids = this.selectedIds();
+    if (ids.length === 0) return;
+    await this.attempt(async () => {
+      const done: ClipId[] = [];
+      try {
+        for (const id of ids) {
+          await this.api.deleteClip(id);
+          done.push(id);
+        }
+      } finally {
+        if (done.length) this.removeLocally(done);
+      }
+      this.flash = done.length === 1 ? "Deleted 1 clip" : `Deleted ${done.length} clips`;
+    });
+  }
+
+  async rename(id: ClipId, title: string): Promise<void> {
+    const t = title.trim() || null;
+    await this.attempt(async () => {
+      await this.api.setClipTitle(id, t);
+      this.pager.patch(id, { title: t });
+    });
+  }
+
+  // ---- preview ----
+
+  async togglePreview(): Promise<void> {
+    if (this.previewOpen) return this.closePreview();
+    if (this.selection.focus == null) return;
+    this.previewOpen = true;
+    await this.loadPreview();
+  }
+
+  closePreview(): void {
+    this.previewOpen = false;
+    this.preview = null;
+    this.previewToken++;
+  }
+
+  private async loadPreview(): Promise<void> {
+    const clip = this.focusClip;
+    const token = ++this.previewToken;
+    if (!clip) {
+      this.preview = null;
+      return;
+    }
+    if (clip.kind === "image") {
+      this.preview = { id: clip.id, kind: clip.kind, text: null, loading: false };
+      return;
+    }
+    this.preview = { id: clip.id, kind: clip.kind, text: null, loading: true };
+    let text: string | null = null;
+    try {
+      text = await this.api.getClipText(clip.id);
+    } catch (e) {
+      this.flash = message(e);
+    }
+    if (token !== this.previewToken) return;
+    this.preview = { id: clip.id, kind: clip.kind, text: text ?? clip.preview, loading: false };
+  }
+
+  // ---- pinboards ----
+
+  async createPinboard(name: string): Promise<Pinboard | null> {
+    const n = name.trim();
+    if (!n) return null;
+    let created: Pinboard | null = null;
+    await this.attempt(async () => {
+      const used = new Set(this.pinboards.map((p) => p.color));
+      const color = PINBOARD_COLORS.find((c) => !used.has(c)) ?? PINBOARD_COLORS[this.pinboards.length % PINBOARD_COLORS.length];
+      created = await this.api.createPinboard(n, color);
+      const c = created;
+      this.pinboards = [...this.pinboards.filter((p) => p.id !== c.id), c];
+      await this.setTab(c.id);
+    });
+    return created;
+  }
+
+  async renamePinboard(id: PinboardId, name: string): Promise<void> {
+    const n = name.trim();
+    if (!n) return;
+    await this.attempt(async () => {
+      await this.api.renamePinboard(id, n);
+      this.pinboards = this.pinboards.map((p) => (p.id === id ? { ...p, name: n } : p));
+    });
+  }
+
+  async deletePinboard(id: PinboardId): Promise<void> {
+    await this.attempt(async () => {
+      await this.api.deletePinboard(id);
+      this.pinboards = this.pinboards.filter((p) => p.id !== id);
+      if (this.pinboardId === id) await this.setTab(null);
+    });
+  }
+
+  // ---- settings shortcuts ----
+
+  async setPaused(paused: boolean): Promise<void> {
+    await this.attempt(async () => {
+      await this.api.setCapturePaused(paused);
+      if (this.settings) this.settings = { ...this.settings, capturePaused: paused };
+    });
+  }
+
+  /** Opens the settings window; Rust hides the shelf first. */
+  async openSettings(): Promise<void> {
+    this.search.cancel();
+    await this.attempt(() => this.api.openSettings());
+    this.afterHide();
+  }
+
+  // ---- events ----
+
+  private async onClipsChanged(p: ClipsChanged): Promise<void> {
+    if (!this.visible) {
+      this.stale = true;
+      return;
+    }
+    if (p.reason === "deleted" && p.id != null) {
+      if (this.clips.some((c) => c.id === p.id)) this.removeLocally([p.id]);
+      return;
+    }
+    await this.refresh();
+  }
+
+  private async onPinboardsChanged(): Promise<void> {
+    await this.loadPinboards();
+    if (this.pinboardId != null && !this.pinboards.some((p) => p.id === this.pinboardId)) {
+      if (this.visible) await this.setTab(null);
+      else this.pinboardId = null;
+      return;
+    }
+    if (this.visible) await this.refresh();
+    else this.stale = true;
+  }
+
+  /** True when changes arrived while hidden (the next show reloads anyway). */
+  get isStale(): boolean {
+    return this.stale;
+  }
+
+  // ---- keyboard ----
+
+  /** Run a keyboard action. Returns false for actions the view handles itself. */
+  async run(a: KeyAction): Promise<boolean> {
+    switch (a.type) {
+      case "move":
+        this.move(a.delta, a.extend);
+        return true;
+      case "edge":
+        this.edge(a.end);
+        return true;
+      case "paste":
+        await this.paste(a.plain);
+        return true;
+      case "pasteNth":
+        await this.pasteNth(a.n, a.plain);
+        return true;
+      case "copy":
+        await this.copy(a.plain);
+        return true;
+      case "pin":
+        await this.togglePin();
+        return true;
+      case "delete":
+        await this.deleteSelected();
+        return true;
+      case "selectAll":
+        this.selectAll();
+        return true;
+      case "preview":
+        await this.togglePreview();
+        return true;
+      case "closePreview":
+        this.closePreview();
+        return true;
+      case "close":
+        await this.close();
+        return true;
+      case "focusSearch":
+        this.focusSearchTick++;
+        return true;
+      case "settings":
+        await this.openSettings();
+        return true;
+      case "typeToSearch":
+        return false;
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "shelf",
+  "description": "The shelf window may call the commands the shelf uses and listen to Satchel's events. Settings are edited in their own window (see settings.json). No plugin permissions are granted.",
+  "local": true,
+  "windows": [
+    "shelf"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-list-clips",
+    "allow-get-clip-text",
+    "allow-get-clip-thumbnail",
+    "allow-paste-clip",
+    "allow-paste-clips",
+    "allow-copy-clip",
+    "allow-delete-clip",
+    "allow-set-clip-title",
+    "allow-list-pinboards",
+    "allow-create-pinboard",
+    "allow-rename-pinboard",
+    "allow-delete-pinboard",
+    "allow-pin-clip",
+    "allow-unpin-clip",
+    "allow-get-settings",
+    "allow-set-capture-paused",
+    "allow-hide-shelf",
+    "allow-open-settings"
+  ]
+}

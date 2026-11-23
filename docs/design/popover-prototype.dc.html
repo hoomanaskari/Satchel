@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Menu bar popover</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid rgba(0,113,227,0.6);outline-offset:-2px}
+input::placeholder{color:inherit;opacity:0.62}
+</style>
+</helmet>
+<div style="width: 400px; height: 600px; box-sizing: border-box; background: {{t.panel}}; border: 1px solid {{t.hair}}; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 13px; color: {{t.label}}; -webkit-font-smoothing: antialiased">
+
+  <div style="padding: 12px 12px 6px">
+    <div style="display: flex; align-items: center; gap: 8px; background: {{t.field}}; border-radius: 10px; padding: 0 10px; height: 36px; box-sizing: border-box; color: {{t.sec}}">
+      <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <label for="pq" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search clipboard history</label>
+      <input id="pq" type="text" placeholder="Search" style="flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: {{t.label}}; font-family: inherit; font-size: 14px; height: 32px">
+    </div>
+  </div>
+
+  <div style="padding: 8px 22px 4px; font-size: 11px; font-weight: 600; color: {{t.sec}}">Pinned</div>
+  <div style="display: flex; flex-direction: column; padding: 0 6px">
+    <sc-for list="{{ pinned }}" as="r" hint-placeholder-count="2">
+      <button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px 0 10px; border: none; border-radius: 9px; background: {{r.bg}}; color: {{r.fg}}; text-align: left">
+        <span aria-hidden="true" style="flex: none; width: 22px; height: 22px; border-radius: 6px; background: {{r.tile}}; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{ r.initial }}</span>
+        <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-family: {{r.font}}">{{ r.text }}</span>
+        <span style="flex: none; font-size: 12px; color: {{r.keyFg}}">{{ r.key }}</span>
+      </button>
+    </sc-for>
+  </div>
+
+  <div style="height: 1px; background: {{t.hair}}; margin: 6px 16px"></div>
+
+  <div style="padding: 4px 22px 4px; font-size: 11px; font-weight: 600; color: {{t.sec}}">Recent</div>
+  <div style="display: flex; flex-direction: column; padding: 0 6px; flex: 1; min-height: 0; overflow: hidden">
+    <sc-for list="{{ recent }}" as="r" hint-placeholder-count="6">
+      <button type="button" style="display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px 0 10px; border: none; border-radius: 9px; background: {{r.bg}}; color: {{r.fg}}; text-align: left">
+        <span aria-hidden="true" style="flex: none; width: 22px; height: 22px; border-radius: 6px; background: {{r.tile}}; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08)">{{ r.initial }}</span>
+        <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-family: {{r.font}}">{{ r.text }}</span>
+        <span style="flex: none; font-size: 12px; color: {{r.keyFg}}">{{ r.key }}</span>
+      </button>
+    </sc-for>
+  </div>
+
+  <div style="height: 1px; background: {{t.hair}}; margin: 0 16px"></div>
+  <div style="display: flex; flex-direction: column; padding: 6px">
+    <button type="button" style="display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 12px 0 16px; border: none; border-radius: 9px; background: transparent; color: {{t.label}}; font-size: 13px; text-align: left">
+      <span>Show Clipboard Shelf</span>
+      <span style="font-size: 12px; color: {{t.sec}}">⇧⌘V</span>
+    </button>
+    <button type="button" style="display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 12px 0 16px; border: none; border-radius: 9px; background: transparent; color: {{t.label}}; font-size: 13px; text-align: left">
+      <span>Pause Capturing</span>
+    </button>
+    <button type="button" style="display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 12px 0 16px; border: none; border-radius: 9px; background: transparent; color: {{t.label}}; font-size: 13px; text-align: left">
+      <span>Settings…</span>
+      <span style="font-size: 12px; color: {{t.sec}}">⌘,</span>
+    </button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"appearance":{"editor":"enum","options":["Light","Dark"],"default":"Light"},"accent":{"editor":"color","default":"#0071E3","options":["#0071E3","#8944AB","#C93A6B","#5E5E63"]},"$preview":{"width":400,"height":600}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#0071E3';
+    const dark = (this.props.appearance ?? 'Light') === 'Dark';
+    const t = dark
+      ? { label: '#F5F5F7', sec: '#AEAEB2', panel: '#2A2A2C', field: 'rgba(255,255,255,0.1)', hair: 'rgba(255,255,255,0.12)' }
+      : { label: '#1D1D1F', sec: '#5E5E63', panel: '#F4F4F6', field: 'rgba(0,0,0,0.06)', hair: 'rgba(0,0,0,0.1)' };
+    const tiles = { Notes: '#A86B00', Safari: '#0A66C2', Xcode: '#1558B0', Screenshot: '#4A4A4F', Mail: '#0B6FD3', Finder: '#1777C9', Terminal: '#2B2B2E' };
+    const row = (app, text, key, opts) => {
+      const o = opts || {};
+      return {
+        text, key,
+        initial: o.swatch ? '' : app.charAt(0),
+        tile: o.swatch || tiles[app],
+        font: o.code ? 'ui-monospace, SF Mono, Menlo, monospace' : 'inherit',
+        bg: o.on ? accent : 'transparent',
+        fg: o.on ? '#FFFFFF' : t.label,
+        keyFg: o.on ? '#FFFFFF' : t.sec
+      };
+    };
+    return {
+      t,
+      pinned: [
+        row('Xcode', 'let pb = NSPasteboard.general', '⌥1', { code: true }),
+        row('Mail', 'Email signature', '⌥2')
+      ],
+      recent: [
+        row('Notes', 'Ship the clipboard watcher behind a flag first', '⌘1', { on: true }),
+        row('Safari', 'NSPasteboard — Apple Developer', '⌘2'),
+        row('Figma', '#34C759', '⌘3', { swatch: '#34C759' }),
+        row('Screenshot', 'Image · 1284 × 720', '⌘4'),
+        row('Finder', 'roadmap-q1.pdf', '⌘5'),
+        row('Terminal', 'git log --oneline --graph --decorate -20', '⌘6', { code: true })
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
