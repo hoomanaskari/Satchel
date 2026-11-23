@@ -39,6 +39,7 @@ fn clip(text: &str) -> NewClip {
         kind: ClipKind::Text,
         text: Some(text.into()),
         html: None,
+        rtf: None,
         image_png: None,
         thumbnail_png: None,
         file_paths: vec![],
@@ -213,4 +214,93 @@ mod unix {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         assert!(matches!(Store::open(&link), Err(Error::Invalid(_))));
     }
+}
+
+/// A 3x2 RGBA PNG (signature + IHDR is all the store reads).
+fn tiny_png() -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+    png.extend_from_slice(&3u32.to_be_bytes());
+    png.extend_from_slice(&2u32.to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    png
+}
+
+#[test]
+fn images_files_and_rich_text_survive_reopen() {
+    let tmp = TempDir::new();
+    let db = tmp.path().join("satchel.db");
+    let rtf = b"{\\rtf1 \\b bold}".to_vec();
+    let (img, rich, files) = {
+        let mut s = Store::open(&db).unwrap();
+        let id = |o| match o {
+            satchel_core::InsertOutcome::Inserted(c) => c.id,
+            other => panic!("{other:?}"),
+        };
+        let img = id(s
+            .insert(
+                NewClip {
+                    kind: ClipKind::Image,
+                    text: None,
+                    image_png: Some(tiny_png()),
+                    thumbnail_png: Some(tiny_png()),
+                    ..clip("")
+                },
+                1,
+            )
+            .unwrap());
+        let rich = id(s
+            .insert(NewClip { html: Some("<b>bold</b>".into()), rtf: Some(rtf.clone()), ..clip("bold") }, 2)
+            .unwrap());
+        let files = id(s
+            .insert(
+                NewClip {
+                    kind: ClipKind::File,
+                    text: None,
+                    file_paths: vec!["/a/b.txt".into(), "/c/folder".into()],
+                    ..clip("")
+                },
+                3,
+            )
+            .unwrap());
+        (img, rich, files)
+    };
+    let s = Store::open(&db).unwrap();
+    let c = s.content(img).unwrap().unwrap();
+    assert_eq!(c.image_png, Some(tiny_png()));
+    assert_eq!(s.thumbnail(img).unwrap(), Some(tiny_png()));
+    let images = s.list(&Query { kind: Some(ClipKind::Image), ..Query::default() }).unwrap();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].preview, "3 \u{d7} 2");
+    let c = s.content(rich).unwrap().unwrap();
+    assert_eq!(c.html.as_deref(), Some("<b>bold</b>"));
+    assert_eq!(c.rtf, Some(rtf));
+    assert_eq!(s.content(files).unwrap().unwrap().file_paths, vec!["/a/b.txt", "/c/folder"]);
+}
+
+#[test]
+fn version_1_databases_gain_the_rtf_column() {
+    let tmp = TempDir::new();
+    let db = tmp.path().join("satchel.db");
+    let old = {
+        let mut s = Store::open(&db).unwrap();
+        match s.insert(clip("from version 1"), 1).unwrap() {
+            satchel_core::InsertOutcome::Inserted(c) => c.id,
+            other => panic!("{other:?}"),
+        }
+    };
+    {
+        // Put the file back the way schema version 1 left it.
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch("ALTER TABLE clip_data DROP COLUMN rtf; PRAGMA user_version = 1;")
+            .unwrap();
+    }
+    let mut s = Store::open(&db).unwrap();
+    let c = s.content(old).unwrap().unwrap();
+    assert_eq!(c.text.as_deref(), Some("from version 1"));
+    assert_eq!(c.rtf, None);
+    let rich = match s.insert(NewClip { rtf: Some(b"{\\rtf1 x}".to_vec()), ..clip("new") }, 2).unwrap() {
+        satchel_core::InsertOutcome::Inserted(c) => c.id,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(s.content(rich).unwrap().unwrap().rtf.as_deref(), Some(&b"{\\rtf1 x}"[..]));
 }

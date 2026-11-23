@@ -9,6 +9,8 @@
 import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import type {
+  AppInfo,
+  CaptureSkipped,
   ClipId,
   ClipsChanged,
   ClipSummary,
@@ -84,11 +86,14 @@ async function on<E extends EventName>(event: E, handler: (payload: Events[E]) =
 export const listClips = (query: Query): Promise<ClipSummary[]> => call("list_clips", { query });
 export const getClipText = (id: ClipId): Promise<string | null> => call("get_clip_text", { id });
 
-export async function getClipThumbnail(id: ClipId): Promise<Uint8Array> {
-  const raw = await call("get_clip_thumbnail", { id });
+function bytes(raw: ArrayBuffer | Uint8Array | number[]): Uint8Array {
   if (raw instanceof Uint8Array) return raw;
   if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
-  return Uint8Array.from(raw);
+  return Uint8Array.from(raw ?? []);
+}
+
+export async function getClipThumbnail(id: ClipId): Promise<Uint8Array> {
+  return bytes(await call("get_clip_thumbnail", { id }));
 }
 
 export const pasteClip = (id: ClipId, plainText: boolean): Promise<void> => call("paste_clip", { id, plainText });
@@ -114,6 +119,13 @@ export const setCapturePaused = (paused: boolean): Promise<void> => call("set_ca
 export const hideShelf = (): Promise<void> => call("hide_shelf");
 export const openSettings = (): Promise<void> => call("open_settings");
 export const closeSettings = (): Promise<void> => call("close_settings");
+export const openAccessibilitySettings = (): Promise<void> => call("open_accessibility_settings");
+export const listApps = (): Promise<AppInfo[]> => call("list_apps");
+export const resolveApps = (ids: string[]): Promise<(AppInfo | null)[]> => call("resolve_apps", { ids });
+export async function getAppIcon(id: string): Promise<Uint8Array> {
+  return bytes(await call("get_app_icon", { id }));
+}
+export const chooseApp = (): Promise<AppInfo | null> => call("choose_app");
 
 // ---- events ----
 
@@ -121,6 +133,7 @@ export const onClipsChanged = (h: (p: ClipsChanged) => void) => on("clips-change
 export const onPinboardsChanged = (h: (p: null) => void) => on("pinboards-changed", h);
 export const onShelfShown = (h: (p: null) => void) => on("shelf-shown", h);
 export const onSettingsChanged = (h: (p: Settings) => void) => on("settings-changed", h);
+export const onCaptureSkipped = (h: (p: CaptureSkipped) => void) => on("capture-skipped", h);
 
 /** Everything above as one object, so state modules can take it as a dependency. */
 export const api = {
@@ -146,10 +159,16 @@ export const api = {
   hideShelf,
   openSettings,
   closeSettings,
+  openAccessibilitySettings,
+  listApps,
+  resolveApps,
+  getAppIcon,
+  chooseApp,
   onClipsChanged,
   onPinboardsChanged,
   onShelfShown,
   onSettingsChanged,
+  onCaptureSkipped,
 };
 
 export type Api = typeof api;

@@ -7,6 +7,7 @@
 
 import type { Transport } from "../ipc";
 import type {
+  AppInfo,
   ClipId,
   ClipKind,
   ClipSummary,
@@ -19,6 +20,10 @@ import type {
 } from "../types";
 
 const PREVIEW_CHARS = 300;
+/** Same text as `error::ACCESSIBILITY` in Rust. */
+const ACCESSIBILITY_ERROR =
+  "accessibility-permission-required: Satchel copied the clip but needs Accessibility access to paste it. " +
+  "Press the paste shortcut yourself, or allow Satchel in System Settings > Privacy & Security > Accessibility.";
 
 interface Row extends ClipSummary {
   text: string | null;
@@ -143,11 +148,73 @@ async function drawThumbnail(seed: number): Promise<ArrayBuffer> {
   return blob.arrayBuffer();
 }
 
+/** Installed apps for the excluded-apps picker, unsorted like a folder scan. */
+const INSTALLED_APPS: [string, string, string][] = [
+  ["com.apple.Safari", "Safari", "#0A84FF"],
+  ["com.apple.Notes", "Notes", "#FFD60A"],
+  ["com.apple.mail", "Mail", "#0A84FF"],
+  ["com.apple.TextEdit", "TextEdit", "#8E8E93"],
+  ["com.apple.Terminal", "Terminal", "#2B2B2E"],
+  ["com.apple.calculator", "Calculator", "#FF9F0A"],
+  ["com.apple.iWork.Pages", "Pages", "#FF9F0A"],
+  ["com.apple.keychainaccess", "Keychain Access", "#8E8E93"],
+  ["com.apple.Passwords", "Passwords", "#30D158"],
+  ["com.apple.dt.Xcode", "Xcode", "#0A84FF"],
+  ["com.1password.1password", "1Password", "#1A8CFF"],
+  ["com.bitwarden.desktop", "Bitwarden", "#175DDC"],
+  ["com.figma.Desktop", "Figma", "#A259FF"],
+  ["com.tinyspeck.slackmacgap", "Slack", "#4A154B"],
+  ["com.microsoft.VSCode", "Visual Studio Code", "#007ACC"],
+  ["org.mozilla.firefox", "Firefox", "#FF7139"],
+  ["com.spotify.client", "Spotify", "#1DB954"],
+];
+/** Running apps that are not in an Applications folder. */
+const RUNNING_ONLY: [string, string, string][] = [["com.apple.finder", "Finder", "#1E90FF"]];
+const RUNNING = new Set(["com.apple.finder", "com.apple.Safari", "com.apple.Notes", "com.tinyspeck.slackmacgap"]);
+/** What the mock's "Choose Other App…" panel picks. */
+const CHOSEN_APP: [string, string, string] = ["com.example.PortableVault", "Portable Vault", "#B4235A"];
+
+async function drawAppIcon(name: string, color: string): Promise<ArrayBuffer> {
+  if (typeof OffscreenCanvas === "undefined") return staticPng();
+  const c = new OffscreenCanvas(64, 64);
+  const g = c.getContext("2d");
+  if (!g) return staticPng();
+  g.fillStyle = color;
+  g.beginPath();
+  g.roundRect(6, 6, 52, 52, 12);
+  g.fill();
+  g.fillStyle = "#fff";
+  g.font = "600 28px -apple-system, system-ui, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(Array.from(name)[0] ?? "?", 32, 34);
+  const blob = await c.convertToBlob({ type: "image/png" });
+  return blob.arrayBuffer();
+}
+
 function defaultSettings(): Settings {
   return {
     maxItems: 2000,
     retentionDays: 90,
-    excludedAppIds: ["com.agilebits.onepassword7", "com.1password.1password", "com.apple.keychainaccess"],
+    // A slice of the real defaults (installed, not installed and other-platform
+    // entries; only the installed ones are listed) plus one user-added entry
+    // for an app that is not installed (listed by identifier).
+    excludedAppIds: [
+      "com.1password.1password",
+      "com.agilebits.onepassword7",
+      "com.agilebits.onepassword-osx",
+      "com.bitwarden.desktop",
+      "org.keepassxc.keepassxc",
+      // Differs from the line above only in case, like the real defaults.
+      "org.keepassxc.KeePassXC",
+      "com.apple.keychainaccess",
+      "com.apple.Passwords",
+      "1Password.exe",
+      "KeePass.exe",
+      "keepassxc",
+      "seahorse",
+      "com.example.OldVault",
+    ],
     capturePaused: false,
     captureImages: true,
     shelfShortcut: "CommandOrControl+Shift+V",
@@ -180,8 +247,12 @@ export interface MockBackend {
   count(): number;
   /** Pretend the user copied some text in another app. Returns the new id. */
   simulateCopy(text: string, app?: SourceApp): ClipId;
+  /** Pretend the user copied something over Satchel's size cap. */
+  simulateOversizedCopy(kind: ClipKind, limitBytes: number): void;
   /** Pretend the global shortcut opened the shelf. */
   show(): void;
+  /** Pretend Satchel does (not) hold the Accessibility permission. */
+  setPastePermission(granted: boolean): void;
 }
 
 export function createMockBackend(opts: MockOptions = {}): MockBackend {
@@ -189,6 +260,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
   const start = now();
   let rows: Row[] = [];
   let nextId = 1;
+  let pastePermission = true;
   const samples = buildSamples();
   // Oldest first so ids grow with time, like a real insert order.
   for (let i = samples.length - 1; i >= 0; i--) {
@@ -260,10 +332,12 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     paste_clip: (a) => {
       bump(find(a.id));
       emit("clips-changed", { reason: "bumped", id: a.id });
+      if (!pastePermission) throw ACCESSIBILITY_ERROR;
     },
     paste_clips: (a) => {
       for (const id of a.ids as ClipId[]) bump(find(id));
       emit("clips-changed", { reason: "bumped" });
+      if (!pastePermission) throw ACCESSIBILITY_ERROR;
     },
     copy_clip: (a) => {
       bump(find(a.id));
@@ -334,7 +408,34 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     // There is no second window in a plain browser; open /settings by hand.
     open_settings: () => undefined,
     close_settings: () => undefined,
+    open_accessibility_settings: () => undefined,
+    list_apps: () => {
+      const seen = new Set<string>();
+      const out: AppInfo[] = [];
+      for (const [id, name] of [...INSTALLED_APPS, ...RUNNING_ONLY]) {
+        if (seen.has(id.toLowerCase())) continue;
+        seen.add(id.toLowerCase());
+        out.push({ id, name, running: RUNNING.has(id) });
+      }
+      return out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    },
+    resolve_apps: (a) =>
+      (a.ids as string[]).map((id) => {
+        const hit = knownApp(id);
+        return hit ? { id: hit[0], name: hit[1], running: false } : null;
+      }),
+    get_app_icon: (a) => {
+      const hit = knownApp(String(a.id));
+      if (!hit) throw "not found";
+      return drawAppIcon(hit[1], hit[2]);
+    },
+    choose_app: () => ({ id: CHOSEN_APP[0], name: CHOSEN_APP[1], running: false }),
   };
+
+  function knownApp(id: string): [string, string, string] | undefined {
+    const k = id.toLowerCase();
+    return [...INSTALLED_APPS, ...RUNNING_ONLY, CHOSEN_APP].find(([x]) => x.toLowerCase() === k);
+  }
 
   const transport: Transport = {
     async invoke(cmd, args) {
@@ -374,8 +475,14 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       emit("clips-changed", { reason: "inserted", id });
       return id;
     },
+    simulateOversizedCopy(kind, limitBytes) {
+      emit("capture-skipped", { kind, limitBytes });
+    },
     show() {
       emit("shelf-shown", null);
+    },
+    setPastePermission(granted) {
+      pastePermission = granted;
     },
   };
 }

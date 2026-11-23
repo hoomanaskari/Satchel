@@ -9,16 +9,21 @@
     retentionOptions,
     validateSettings,
   } from "$lib/settings-form";
+  import { addExcluded, excludedView, removeExcluded, type AppDirectory, type ExcludedRow } from "$lib/excluded-apps";
   import { isMac } from "$lib/platform";
-  import type { Settings } from "$lib/types";
+  import type { AppInfo, Settings } from "$lib/types";
+  import AppIcon from "./AppIcon.svelte";
+  import AppPicker from "./AppPicker.svelte";
 
   interface Props {
     settings: Settings | null;
     onsave: (s: Settings) => Promise<void>;
     onpause: (paused: boolean) => Promise<void>;
     onclear: () => Promise<void>;
+    /** Names, icons and the picker for the excluded-apps list. */
+    apps: AppDirectory;
   }
-  let { settings, onsave, onpause, onclear }: Props = $props();
+  let { settings, onsave, onpause, onclear, apps }: Props = $props();
 
   // A local draft; re-seeded when the saved settings change underneath.
   let draft = $state<Settings | null>(null);
@@ -55,8 +60,36 @@
   let message = $state("");
   let saving = $state(false);
   let recording = $state(false);
-  let newApp = $state("");
   let confirmClear = $state(false);
+  let pickerOpen = $state(false);
+  let addButton = $state<HTMLButtonElement | null>(null);
+
+  // Installed app (or null) for each excluded id, keyed by lowercased id.
+  // Ids not resolved yet are fetched in one call whenever the list changes.
+  let resolved = $state.raw(new Map<string, AppInfo | null>());
+  let resolving = $state(true);
+  $effect(() => {
+    const ids = draft?.excludedAppIds ?? [];
+    const missing = ids.filter((id) => !resolved.has(id.toLowerCase()));
+    if (missing.length === 0) {
+      if (draft) resolving = false;
+      return;
+    }
+    let live = true;
+    apps
+      .resolveApps(missing)
+      .catch(() => missing.map(() => null))
+      .then((found) => {
+        if (!live) return;
+        const next = new Map(resolved);
+        missing.forEach((id, i) => next.set(id.toLowerCase(), found[i] ?? null));
+        resolved = next;
+      });
+    return () => (live = false);
+  });
+  // Built-in defaults that are not installed stay stored (and enforced) but
+  // are not listed; saving writes the whole draft list back, so they survive.
+  const rows = $derived(draft ? excludedView(draft.excludedAppIds, resolved) : []);
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
@@ -94,11 +127,28 @@
     }
   }
 
-  function addApp() {
+  function addApp(id: string, app: AppInfo | null) {
     if (!draft) return;
-    draft.excludedAppIds = normalizeExcluded([...draft.excludedAppIds, newApp]);
-    newApp = "";
+    if (app) resolved = new Map(resolved).set(id.toLowerCase(), app);
+    draft.excludedAppIds = addExcluded(draft.excludedAppIds, id);
+    closePicker();
+    message = `${app?.name ?? id} will be excluded when you save.`;
   }
+
+  function closePicker() {
+    pickerOpen = false;
+    queueMicrotask(() => addButton?.focus());
+  }
+
+  function removeRow(row: ExcludedRow) {
+    if (!draft) return;
+    draft.excludedAppIds = removeExcluded(draft.excludedAppIds, row.ids);
+    message = "";
+  }
+
+  const rowLabel = (row: ExcludedRow) => row.name ?? row.ids[0];
+  const removeLabel = (row: ExcludedRow) =>
+    `Stop excluding ${rowLabel(row)}` + (row.ids.length > 1 ? ` (${row.ids.length} identifiers)` : row.name ? ` (${row.ids[0]})` : "");
 
   function retentionValue(e: Event) {
     if (!draft) return;
@@ -120,6 +170,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <form
   bind:this={form}
+  inert={pickerOpen}
   class="settings"
   aria-label="Settings"
   onsubmit={save}
@@ -201,36 +252,20 @@
 
       <fieldset class="apps">
         <legend>Never capture from</legend>
-        <ul aria-label="Excluded apps">
-          {#each draft.excludedAppIds as id (id)}
-            <li>
-              <span>{id}</span>
-              <button
-                type="button"
-                class="small"
-                aria-label="Stop excluding {id}"
-                onclick={() => draft && (draft.excludedAppIds = draft.excludedAppIds.filter((x) => x !== id))}>Remove</button
-              >
-            </li>
-          {:else}
-            <li class="muted">No excluded apps.</li>
-          {/each}
-        </ul>
+        <p class="muted">Satchel ignores everything copied in these apps.</p>
+        {#if resolving}
+          <p class="muted">Loading apps…</p>
+        {:else}
+          <ul aria-label="Excluded apps">
+            {#each rows as row (row.key)}
+              {@render appRow(row)}
+            {:else}
+              <li class="muted empty">No excluded apps on this {isMac ? "Mac" : "computer"}.</li>
+            {/each}
+          </ul>
+        {/if}
         <div class="row">
-          <label class="visually-hidden" for="new-app">App identifier to exclude</label>
-          <input
-            id="new-app"
-            type="text"
-            placeholder={isMac ? "com.example.app" : "app.exe"}
-            bind:value={newApp}
-            onkeydown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addApp();
-              }
-            }}
-          />
-          <button type="button" class="small" disabled={!newApp.trim()} onclick={addApp}>Add</button>
+          <button type="button" class="small" bind:this={addButton} onclick={() => (pickerOpen = true)}>Add App…</button>
         </div>
       </fieldset>
     </div>
@@ -250,6 +285,25 @@
     </div>
   {/if}
 </form>
+
+{#snippet appRow(row: ExcludedRow)}
+  <li>
+    <AppIcon icons={apps.icons} id={row.iconId} label={rowLabel(row)} size={20} />
+    <span class="app-text">
+      {#if row.name}
+        <span class="app-name">{row.name}</span>
+      {:else}
+        <span class="app-id">{row.ids[0]}</span>
+      {/if}
+      {#if row.detail}<span class="app-detail" title={row.detail}>{row.detail}</span>{/if}
+    </span>
+    <button type="button" class="small" aria-label={removeLabel(row)} onclick={() => removeRow(row)}>Remove</button>
+  </li>
+{/snippet}
+
+{#if pickerOpen && draft}
+  <AppPicker {apps} excluded={draft.excludedAppIds} onadd={addApp} onclose={closePicker} />
+{/if}
 
 <style>
   .settings {
@@ -296,7 +350,6 @@
     gap: 8px;
   }
   input[type="number"],
-  input[type="text"],
   select {
     height: 26px;
     border: none;
@@ -308,10 +361,6 @@
   }
   input[type="number"] {
     width: 90px;
-  }
-  input[type="text"] {
-    flex: 1;
-    min-width: 0;
   }
   input[aria-invalid="true"] {
     box-shadow: inset 0 0 0 1px var(--danger);
@@ -326,29 +375,50 @@
     color: var(--danger);
     font-size: 11.5px;
   }
+  .apps {
+    grid-column: 1 / -1;
+  }
   .apps ul {
     list-style: none;
     margin: 0;
     padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 96px;
-    overflow: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 4px 16px;
   }
   .apps li {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-height: 28px;
+    min-width: 0;
   }
-  .apps li span {
+  .apps li.empty {
+    margin: 0;
+    min-height: 0;
+  }
+  .app-text {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+  }
+  .app-name,
+  .app-id,
+  .app-detail {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .app-id,
+  .app-detail {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 10.5px;
+    color: var(--sec);
+  }
+  .app-id {
+    font-size: 11.5px;
   }
   button {
     height: 28px;

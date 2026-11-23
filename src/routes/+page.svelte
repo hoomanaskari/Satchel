@@ -11,15 +11,26 @@
   import { safeHexColor } from "$lib/format";
   import { api } from "$lib/ipc";
   import { mapKey, type KeyContext } from "$lib/keyboard";
-  import { isMac, modLabel } from "$lib/platform";
+  import { isMac, modLabel, shelfBackground } from "$lib/platform";
   import { KIND_SCOPES } from "$lib/query";
+  import { AppIconCache } from "$lib/app-icons";
   import { Shelf } from "$lib/shelf.svelte";
   import { ThumbnailCache } from "$lib/thumbs";
   import type { ClipId, PinboardId } from "$lib/types";
 
   const shelf = new Shelf({ api });
+  // Fixed for the life of the page: Rust announces it before the page loads.
+  const glass = shelfBackground() === "glass";
   const thumbs = new ThumbnailCache({
     fetch: (id) => api.getClipThumbnail(id),
+    createUrl: (b) => URL.createObjectURL(b),
+    revoke: (u) => URL.revokeObjectURL(u),
+  });
+  // Source-app icons on the cards: one entry per app, kept for the life of
+  // the page (the shelf is shown and hidden, never reloaded), so reopening
+  // the shelf or re-rendering cards never refetches or flickers.
+  const icons = new AppIconCache({
+    fetch: (id) => api.getAppIcon(id),
     createUrl: (b) => URL.createObjectURL(b),
     revoke: (u) => URL.revokeObjectURL(u),
   });
@@ -34,7 +45,8 @@
   const overlayOpen = $derived(!!menu || !!confirm);
   const focusClip = $derived(shelf.focusClip);
   const hasSelection = $derived(shelf.selection.ids.length > 0);
-  const verb = $derived(shelf.pasteOnSelect ? "Paste" : "Copy");
+  const labels = $derived(shelf.pasteLabels);
+  const notice = $derived(shelf.notice);
 
   onMount(() => {
     let dispose: (() => void) | null = null;
@@ -46,7 +58,7 @@
         else dispose = d;
         ready = true;
       })
-      .catch((e) => (shelf.flash = e instanceof Error ? e.message : String(e)));
+      .catch((e) => shelf.fail(e));
     const vis = () => shelf.setVisible(!document.hidden);
     document.addEventListener("visibilitychange", vis);
     searchEl?.focus();
@@ -55,6 +67,7 @@
       dispose?.();
       document.removeEventListener("visibilitychange", vis);
       thumbs.clear();
+      icons.clear();
     };
   });
 
@@ -150,8 +163,8 @@
     const n = shelf.selection.ids.length;
     if (n === 0) return [];
     return [
-      { label: n > 1 ? `${verb} ${n} Clips` : verb, hint: "↩", action: () => void shelf.paste(false) },
-      { label: `${verb} as Plain Text`, hint: "⇧↩", action: () => void shelf.paste(true) },
+      { label: labels.paste, hint: "↩", action: () => void shelf.paste(false) },
+      { label: labels.plain, hint: "⇧↩", action: () => void shelf.paste(true) },
       { label: "Copy", hint: `${modLabel}C`, action: () => void shelf.copy(false) },
       { label: "Preview", hint: "Space", disabled: !single, action: () => void shelf.togglePreview() },
       { label: "Rename…", disabled: !single, action: () => (renaming = shelf.selection.focus) },
@@ -217,12 +230,20 @@
     menu = null;
     searchEl?.focus();
   }
+
+  // The window is larger than the panel: its transparent margins hold the
+  // panel's shadow. A click there is a click outside the shelf, so it
+  // dismisses it like one (macOS lets clicks on fully clear pixels through
+  // to the window below, but not on the faint shadow).
+  function onpointerdown(e: PointerEvent) {
+    if (e.target === document.documentElement || e.target === document.body) void shelf.close();
+  }
 </script>
 
 <svelte:head><title>Satchel</title></svelte:head>
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onpointerdown} />
 
-<main class="panel" aria-label="Clipboard shelf" aria-busy={!ready}>
+<main class="panel" class:glass aria-label="Clipboard shelf" aria-busy={!ready}>
   <header class="top">
     <div class="search">
       <Icon name="search" />
@@ -272,8 +293,28 @@
       {/each}
     </div>
 
-    <div class="spacer"></div>
-    <div class="count" aria-live="polite">{shelf.resultLabel}</div>
+    <!-- The notice (errors, warnings, the missing permission) takes only the
+         room left between the filters and the actions. Its live region is
+         always in the DOM so screen readers announce what lands in it.
+         Confirmations ("Pinned", "Copied") are announced, never shown. -->
+    <p class="visually-hidden" role="status">{shelf.announcement}</p>
+    <div class="notice-slot" class:active={!!notice} class:permission={notice?.tone === "permission"}>
+      <div class="notice" class:error={notice?.tone === "error"} class:permission={notice?.tone === "permission"} title={notice?.text}>
+        <p class="notice-text" role="alert">{notice?.text ?? ""}</p>
+      </div>
+      {#if notice?.tone === "permission"}
+        <button type="button" class="pill small" aria-label="Open Accessibility Settings…" onclick={() => void shelf.openAccessibilitySettings()}>
+          <span class="long">Open Accessibility Settings…</span><span class="short" aria-hidden="true">Open Settings…</span>
+        </button>
+      {/if}
+    </div>
+    <div class="count" class:hidden={!!notice} aria-live="polite">{shelf.resultLabel}</div>
+    <div class="actions">
+      <button type="button" class="pill" disabled={!hasSelection} aria-label={labels.plain} onclick={() => void shelf.paste(true)}>
+        <span class="long">{labels.plain}</span><span class="short" aria-hidden="true">Plain Text</span>
+      </button>
+      <button type="button" class="pill primary" disabled={!hasSelection} onclick={() => void shelf.paste(false)}>{labels.paste}</button>
+    </div>
     <button type="button" class="round" aria-label="More options" aria-haspopup="menu" onclick={(e) => openMoreMenu(e.currentTarget)}>
       <Icon name="more" size={18} />
     </button>
@@ -283,22 +324,16 @@
     <CardList
       {shelf}
       {thumbs}
+      {icons}
       {renaming}
       onpin={openPinMenu}
       onmenu={(x, y) => (menu = { items: clipItems(), x, y, label: "Clip" })}
       onrename={commitRename}
     />
     {#if shelf.previewOpen && focusClip}
-      <PreviewPanel clip={focusClip} preview={shelf.preview} {thumbs} now={shelf.now} onclose={() => shelf.closePreview()} />
+      <PreviewPanel clip={focusClip} preview={shelf.preview} {thumbs} {icons} now={shelf.now} onclose={() => shelf.closePreview()} />
     {/if}
   </div>
-
-  <footer class="bottom">
-    <p class="status" role="status">{shelf.status}</p>
-    <div class="spacer"></div>
-    <button type="button" class="pill" disabled={!hasSelection} onclick={() => void shelf.paste(true)}>{verb} as Plain Text</button>
-    <button type="button" class="pill primary" disabled={!hasSelection} onclick={() => void shelf.paste(false)}>{verb}</button>
-  </footer>
 
   {#if confirm}
     <Confirm
@@ -329,20 +364,64 @@
     left: var(--panel-inset);
     right: var(--panel-inset);
     bottom: var(--panel-inset);
+    /* Exactly the window minus its top and bottom margins, like the native
+       glass / blur view behind it (`--shelf-height` mirrors shelf.rs HEIGHT;
+       a short screen clamps the window, hence the 100vh bound). */
+    height: min(
+      calc(var(--shelf-height) - var(--panel-top) - var(--panel-inset)),
+      calc(100vh - var(--panel-top) - var(--panel-inset))
+    );
     border-radius: var(--panel-radius);
     background: var(--panel);
     border: 1px solid var(--panel-bd);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    /* Both layers fade out inside the window's transparent margins (see
+       shelf.rs PANEL_INSET / PANEL_TOP), so the window edge never cuts them:
+       a soft rim reaching 12px (= --panel-inset) on every side, and a lift
+       shadow shrunk by its spread so it reaches 22px up (< --panel-top) but
+       only 12px to the sides and 2px down. */
+    box-shadow:
+      0 0 12px rgba(0, 0, 0, 0.22),
+      0 -10px 20px -8px rgba(0, 0, 0, 0.28);
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
+  /* Over Liquid Glass (macOS 26+) the panel tint is nearly clear so the
+     glass shows; the glass itself keeps text legible on any wallpaper. Cards
+     stay opaque. Fields get a touch more contrast than over the blur. The
+     native glass draws its own rim, so the border is fainter. */
+  .panel.glass {
+    --panel: rgba(255, 255, 255, 0.12);
+    --panel-bd: rgba(255, 255, 255, 0.35);
+    --field: rgba(0, 0, 0, 0.07);
+    --field-hover: rgba(0, 0, 0, 0.12);
+    --hair: rgba(0, 0, 0, 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    .panel.glass {
+      --panel: rgba(0, 0, 0, 0.16);
+      --panel-bd: rgba(255, 255, 255, 0.12);
+      --field: rgba(255, 255, 255, 0.12);
+      --field-hover: rgba(255, 255, 255, 0.18);
+      --hair: rgba(255, 255, 255, 0.14);
+    }
+  }
+  /* One row, never wrapping. As the screen narrows: the search field, the
+     pinboard tabs and the kind filters shrink (tabs and filters scroll
+     sideways) down to their minimums; the item count goes (≤1180 px), then
+     "… as Plain Text" shortens to "Plain Text" (≤1000 px), and on the
+     narrowest panels (≤860 px) that button leaves the bar (the clip menu and
+     Shift+Return still do it). The notice only takes the room left over, and
+     180 px when it has something to say (the count makes way for it), so it
+     never pushes the actions out. */
   .top {
+    container: top / inline-size;
     display: flex;
     align-items: center;
     gap: 14px;
     padding: 16px 20px 12px;
     min-width: 0;
+    flex: none;
   }
   .search {
     display: flex;
@@ -354,7 +433,7 @@
     height: 36px;
     width: 280px;
     flex: 0 1 280px;
-    min-width: 140px;
+    min-width: 120px;
     color: var(--sec);
   }
   .search:focus-within {
@@ -382,7 +461,7 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    min-width: 0;
+    min-width: 120px;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -407,13 +486,98 @@
     background: var(--field);
     color: var(--label);
   }
-  .spacer {
-    flex: 1;
+  .notice-slot {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .notice-slot.active {
+    min-width: 180px;
+  }
+  /* Room for the start of the explanation as well as its button. */
+  .notice-slot.permission {
+    min-width: 400px;
+  }
+  .notice {
+    display: none;
+    min-width: 0;
+    align-items: center;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 14px;
+    background: var(--field);
+    color: var(--label);
+    font-size: 12px;
+  }
+  .notice-slot.active .notice {
+    display: flex;
+  }
+  .notice.error {
+    color: var(--danger);
+  }
+  /* The explanation is long: two small lines fit the bar's 36 px row and
+     show its first sentence; all of it is in the tooltip and announced. */
+  .notice.permission {
+    background: rgba(255, 159, 10, 0.2);
+    height: 36px;
+    border-radius: 10px;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .notice.permission .notice-text {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .notice-text {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .count {
     font-size: 12px;
     color: var(--sec);
     white-space: nowrap;
+    flex: none;
+  }
+  .count.hidden {
+    display: none;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    flex: none;
+  }
+  .pill .short {
+    display: none;
+  }
+  @container top (max-width: 1180px) {
+    .count {
+      display: none;
+    }
+  }
+  @container top (max-width: 860px) {
+    .actions .pill:not(.primary) {
+      display: none;
+    }
+  }
+  @container top (max-width: 1000px) {
+    .notice-slot.permission {
+      min-width: 260px;
+    }
+    .pill .long {
+      display: none;
+    }
+    .pill .short {
+      display: inline;
+    }
   }
   .round {
     width: 36px;
@@ -432,25 +596,8 @@
   }
   .list {
     position: relative;
-  }
-  .bottom {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 20px;
-    height: 56px;
-    border-top: 1px solid var(--hair);
-    flex: none;
-  }
-  .status {
-    margin: 0;
-    font-size: 12px;
-    color: var(--sec);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 620px;
+    flex: 1;
+    min-height: 0;
   }
   .pill {
     height: 32px;
@@ -467,6 +614,12 @@
     background: var(--accent);
     color: #fff;
     font-weight: 600;
+  }
+  .pill.small {
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 14px;
+    font-size: 12px;
   }
   .pill:disabled {
     opacity: 0.45;

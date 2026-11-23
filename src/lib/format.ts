@@ -1,7 +1,7 @@
-// Pure formatting helpers for cards, status line and labels. Everything
+// Pure formatting helpers for cards, labels and the preview. Everything
 // returned here is plain text: the UI only ever puts it into text nodes.
 
-import type { ClipKind, ClipSummary, SourceApp } from "./types";
+import type { CaptureSkipped, ClipKind, ClipSummary, SourceApp } from "./types";
 
 const MIN = 60_000;
 const HR = 60 * MIN;
@@ -41,6 +41,12 @@ export function formatBytes(n: number): string {
   if (u === 0) return `${n} B`;
   const s = v < 10 ? (Math.round(v * 10) / 10).toString() : Math.round(v).toString();
   return `${s} ${units[u]}`;
+}
+
+/** The notice for a copy Satchel did not keep because it is over a size cap. */
+export function skippedNotice(p: CaptureSkipped): string {
+  const what = p.kind === "image" ? "An image you copied" : p.kind === "file" ? "Files you copied" : "Text you copied";
+  return `${what} was not kept: it is over Satchel's ${formatBytes(p.limitBytes)} limit.`;
 }
 
 const HEX = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -106,7 +112,8 @@ export function cardPreview(c: ClipSummary): CardPreview {
     case "color":
       return { ...base, swatch: safeHexColor(c.preview.trim()) };
     case "image":
-      return { ...base, body: `Image · ${formatBytes(c.byteSize)}` };
+      // The preview is the pixel size ("1920 × 1080"); empty for clips stored before it was kept.
+      return { ...base, body: `${c.preview.trim() || "Image"} · ${formatBytes(c.byteSize)}` };
     case "file": {
       const names = c.preview.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map(basename);
       if (names.length <= 1) {
@@ -140,8 +147,9 @@ export function cardLabel(c: ClipSummary, now: number): string {
   return parts.filter(Boolean).join(", ");
 }
 
-export function appInitial(app: SourceApp | null): string {
-  const ch = app ? Array.from(app.name.trim())[0] : undefined;
+/** The letter on an app's fallback tile (no icon): the name's first character. */
+export function appInitial(name: string | null | undefined): string {
+  const ch = name ? Array.from(name.trim())[0] : undefined;
   return ch ? ch.toLocaleUpperCase() : "?";
 }
 
@@ -157,15 +165,6 @@ export function appTileColor(app: SourceApp | null): string {
     h = Math.imul(h, 0x01000193);
   }
   return TILE_COLORS[(h >>> 0) % TILE_COLORS.length];
-}
-
-/** Footer status for the current selection. */
-export function statusLine(selected: ClipSummary[], now: number): string {
-  if (selected.length === 0) return "No Selection";
-  if (selected.length > 1) return `${selected.length} clips selected`;
-  const c = selected[0];
-  const when = relativeTime(c.createdAt, now);
-  return c.sourceApp ? `Copied from ${c.sourceApp.name} · ${when}` : `Copied · ${when}`;
 }
 
 export function resultLabel(count: number, more: boolean): string {

@@ -31,6 +31,16 @@ export interface ClipSummary {
   pinboardIds: PinboardId[];
 }
 
+/** An application for the excluded-apps picker. */
+export interface AppInfo {
+  /** What the excluded-app list stores: the bundle identifier on macOS. */
+  id: string;
+  /** Localized display name. */
+  name: string;
+  /** Running right now. */
+  running: boolean;
+}
+
 export interface Pinboard {
   id: PinboardId;
   name: string;
@@ -75,6 +85,12 @@ export interface ClipsChanged {
   id?: ClipId;
 }
 
+/** A copy that was not kept because it is over a size cap (no content). */
+export interface CaptureSkipped {
+  kind: ClipKind;
+  limitBytes: number;
+}
+
 /** Every command in the contract: argument object and resolved value. */
 export interface Commands {
   list_clips: { args: { query: Query }; ret: ClipSummary[] };
@@ -99,8 +115,18 @@ export interface Commands {
   hide_shelf: { args: undefined; ret: void };
   /** Hides the shelf and opens (or focuses) the settings window. */
   open_settings: { args: undefined; ret: void };
+  /** Hides the shelf and opens System Settings > Privacy & Security > Accessibility. */
+  open_accessibility_settings: { args: undefined; ret: void };
   /** Closes the settings window (called from inside it). */
   close_settings: { args: undefined; ret: void };
+  /** Installed and running apps, one per id, sorted by name (settings window only). */
+  list_apps: { args: undefined; ret: AppInfo[] };
+  /** The installed app for each id, in order; null when it is not on this machine. */
+  resolve_apps: { args: { ids: string[] }; ret: (AppInfo | null)[] };
+  /** The app's icon as raw PNG bytes (64 px square); rejects with "not found". */
+  get_app_icon: { args: { id: string }; ret: ArrayBuffer | Uint8Array | number[] };
+  /** Native "choose an application" panel; null when cancelled. */
+  choose_app: { args: undefined; ret: AppInfo | null };
 }
 
 export type CommandName = keyof Commands;
@@ -111,6 +137,7 @@ export interface Events {
   "pinboards-changed": null;
   "shelf-shown": null;
   "settings-changed": Settings;
+  "capture-skipped": CaptureSkipped;
 }
 
 export type EventName = keyof Events;

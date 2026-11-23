@@ -1,26 +1,31 @@
 //! macOS integration: NSWorkspace for the frontmost app, CGEvent for the
 //! paste keystroke (gated by the Accessibility permission), a
-//! non-activating NSPanel for the shelf and an NSAlert for confirmations.
+//! non-activating NSPanel for the shelf, its Liquid Glass background
+//! (macOS 26+) and an NSAlert for confirmations.
 
 use objc2::rc::autoreleasepool;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions, NSAlertStyle, NSApplication, NSApplicationActivationOptions,
-    NSPanel, NSResponder, NSRunningApplication, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSWorkspace,
+    NSGlassEffectView, NSGlassEffectViewStyle, NSPanel, NSResponder, NSRunningApplication, NSStatusWindowLevel, NSView,
+    NSWindow, NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_core_graphics::{
     CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
     CGPreflightPostEventAccess, CGRequestPostEventAccess,
 };
-use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL};
 
 use super::{Desktop, FrontApp};
 
 /// `kVK_ANSI_V`. Layout-independent position of the V key on ANSI/ISO
 /// keyboards (see the report: non-QWERTY layouts are a known gap).
 const KEY_V: u16 = 9;
+
+/// System Settings > Privacy & Security > Accessibility.
+const ACCESSIBILITY_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
 
 pub struct MacDesktop {
     own_pid: i32,
@@ -64,6 +69,14 @@ impl Desktop for MacDesktop {
         // Shows the system prompt that links to Privacy & Security >
         // Accessibility. It returns immediately.
         let _ = CGRequestPostEventAccess();
+    }
+
+    fn open_keystroke_permission_settings(&self) {
+        autoreleasepool(|_| {
+            if let Some(url) = NSURL::URLWithString(&NSString::from_str(ACCESSIBILITY_SETTINGS_URL)) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        });
     }
 
     fn post_paste_keystroke(&self) -> Result<(), ()> {
@@ -221,11 +234,30 @@ pub fn show_panel(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void, webv
 /// NSVisualEffectView (`NS_VIEW_TAG_BLUR_VIEW` in window-vibrancy 0.8).
 const VIBRANCY_VIEW_TAG: isize = 91_376_254;
 
+/// Frame of the UI's panel inside a content view of `bounds`: `inset`
+/// points from the left, right and bottom edges and `top` points from the
+/// top (`shelf::PANEL_INSET` / `PANEL_TOP`, the CSS panel's margins).
+fn panel_frame(bounds: NSRect, flipped: bool, inset: f64, top: f64) -> NSRect {
+    let width = (bounds.size.width - 2.0 * inset).max(1.0);
+    let height = (bounds.size.height - inset - top).max(1.0);
+    let y = if flipped { top } else { inset };
+    NSRect::new(NSPoint::new(inset, y), NSSize::new(width, height))
+}
+
+/// Pins `view` to the panel frame; autoresizing keeps the margins when the
+/// window is resized (the shelf is resized to each screen it is shown on).
+fn fit_to_panel(content: &NSView, view: &NSView, inset: f64, top: f64) {
+    view.setFrame(panel_frame(content.bounds(), content.isFlipped(), inset, top));
+    view.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+}
+
 /// Shrinks the effect view to the UI's panel: `inset` points from the left,
-/// right and bottom edges, flush with the top. Autoresizing keeps those
+/// right and bottom edges, `top` from the top. Autoresizing keeps those
 /// margins when the window is resized. Returns false if there is no effect
 /// view (effects unsupported or not applied yet).
-pub fn inset_effect_view(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void, inset: f64) -> bool {
+pub fn inset_effect_view(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void, inset: f64, top: f64) -> bool {
     if ns_window.is_null() {
         return false;
     }
@@ -233,14 +265,67 @@ pub fn inset_effect_view(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_voi
     let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
     let Some(content) = window.contentView() else { return false };
     let Some(effect) = content.viewWithTag(VIBRANCY_VIEW_TAG) else { return false };
-    let bounds = content.bounds();
-    let width = (bounds.size.width - 2.0 * inset).max(1.0);
-    let height = (bounds.size.height - inset).max(1.0);
-    let y = if content.isFlipped() { 0.0 } else { inset };
-    effect.setFrame(NSRect::new(NSPoint::new(inset, y), NSSize::new(width, height)));
-    effect.setAutoresizingMask(
+    fit_to_panel(&content, &effect, inset, top);
+    true
+}
+
+/// Whether this macOS has Liquid Glass (`NSGlassEffectView`, macOS 26+).
+/// The class is looked up at run time, so the binary still launches on
+/// macOS 11–15, where the shelf keeps the NSVisualEffectView blur.
+/// `SATCHEL_NO_GLASS` forces the fallback (to check it on a new system).
+pub fn liquid_glass_available() -> bool {
+    std::env::var_os("SATCHEL_NO_GLASS").is_none() && AnyClass::get(c"NSGlassEffectView").is_some()
+}
+
+/// Puts a Liquid Glass view behind the web view, framed to the UI's panel
+/// (`inset` from the left, right and bottom, `top` from the top) with the
+/// panel's corner radius. Unlike window-vibrancy's glass, the web view is not
+/// moved into it: the glass is a sibling below it in the content view, so it
+/// can be inset to the panel while the web view keeps the whole window (the
+/// panel's shadow is drawn there). Call once, at window creation. Returns
+/// false (installing nothing) when glass is unavailable.
+pub fn install_liquid_glass(
+    mtm: MainThreadMarker,
+    ns_window: *mut std::ffi::c_void,
+    inset: f64,
+    top: f64,
+    radius: f64,
+) -> bool {
+    if ns_window.is_null() || !liquid_glass_available() {
+        return false;
+    }
+    // SAFETY: main thread, live NSWindow pointer of the shelf.
+    let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
+    let Some(content) = window.contentView() else { return false };
+    // While its window is key (always, when the shelf is up) the glass
+    // casts a soft shadow of its own, reaching some 25-40 pt past its edge:
+    // more than the window's margins, so the window edge would cut it off in
+    // a hard line. The glass sits in a container clipped to the panel's
+    // rounded shape, which drops that shadow and leaves the material and its
+    // rim as they are; the panel's CSS shadow, sized to the margins, is the
+    // only one.
+    let clip = NSView::initWithFrame(mtm.alloc(), content.bounds());
+    clip.setWantsLayer(true);
+    // SAFETY: `setWantsLayer(true)` gave the view a backing CALayer; these
+    // are its documented `cornerRadius` (CGFloat) and `masksToBounds` (BOOL)
+    // setters, called on the main thread. The default corner curve is
+    // circular, like the CSS panel's border-radius.
+    unsafe {
+        let layer: Option<objc2::rc::Retained<AnyObject>> = msg_send![&*clip, layer];
+        let Some(layer) = layer else { return false };
+        let _: () = msg_send![&*layer, setCornerRadius: radius];
+        let _: () = msg_send![&*layer, setMasksToBounds: true];
+    }
+    fit_to_panel(&content, &clip, inset, top);
+    // The class exists (checked above), so objc2's class lookup cannot fail.
+    let glass = NSGlassEffectView::initWithFrame(mtm.alloc(), clip.bounds());
+    glass.setStyle(NSGlassEffectViewStyle::Regular);
+    glass.setCornerRadius(radius);
+    glass.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
+    clip.addSubview(&glass);
+    content.addSubview_positioned_relativeTo(&clip, NSWindowOrderingMode::Below, None);
     true
 }
 
@@ -272,6 +357,20 @@ pub fn confirm(mtm: MainThreadMarker, message: &str, informative: &str, confirm_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_frame_leaves_the_shadow_margins_on_every_side() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1000.0, 364.0));
+        // AppKit's default, y up: the bottom margin is at y = 0.
+        let up = panel_frame(bounds, false, 12.0, 24.0);
+        assert_eq!((up.origin.x, up.origin.y, up.size.width, up.size.height), (12.0, 12.0, 976.0, 328.0));
+        // Flipped (y down): the top margin is at y = 0.
+        let down = panel_frame(bounds, true, 12.0, 24.0);
+        assert_eq!((down.origin.x, down.origin.y, down.size.width, down.size.height), (12.0, 24.0, 976.0, 328.0));
+        // A window too small for its margins never gets an empty view.
+        let tiny = panel_frame(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(10.0, 20.0)), false, 12.0, 24.0);
+        assert_eq!((tiny.size.width, tiny.size.height), (1.0, 1.0));
+    }
 
     #[test]
     fn panel_class_has_window_layout() {

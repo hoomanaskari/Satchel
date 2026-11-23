@@ -4,6 +4,16 @@ Open source, cross-platform clipboard manager built with Tauri 2.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design, contracts and priorities.
 
+## What it keeps
+
+Text (with its HTML/RTF formatting, so "Paste" and "Paste as Plain Text" differ), links,
+code, colors (hex/rgb/hsl text, and colors copied from color wells), images (screenshots,
+Preview, Photos, browsers' "Copy Image"; PNG, TIFF, JPEG, HEIC, WebP, GIF, BMP, stored as
+PNG) and files (one or many files or folders from Finder; an image file copied in Finder is a
+file). Limits: 2 MiB of text, 64 MB / 100 megapixels per image; a copy over a limit is not
+kept and the shelf says so. Copies marked concealed or transient (password managers) and
+copies from excluded apps are never kept. See "Clip kinds" in the architecture doc.
+
 ## Develop
 
 ```bash

@@ -23,8 +23,11 @@ pub enum Skip {
     OwnWrite,
     /// Paused, excluded app, concealed/transient marker...
     Refused,
-    /// Nothing Satchel keeps (unknown types, over the caps, empty text).
+    /// Nothing Satchel keeps (unknown types, empty text, undecodable image).
     Nothing,
+    /// Over a size cap: not stored, and announced (`capture-skipped`) so the
+    /// shelf can say so.
+    TooLarge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +63,10 @@ impl<S: ClipboardSource> Capturer<S> {
         }
         self.last_seen = count;
         let outcome = self.handle_change(ctx, count);
+        if crate::shelf::tracing() {
+            // Content-free: the change count and the outcome only.
+            eprintln!("[satchel] capture change={count} outcome={outcome:?}");
+        }
         if matches!(outcome, Outcome::Stored { reason: ChangeReason::Inserted, .. }) {
             self.inserts_since_prune += 1;
         }
@@ -96,6 +103,10 @@ impl<S: ClipboardSource> Capturer<S> {
         }
 
         let formats = self.source.format_names();
+        if crate::shelf::tracing() {
+            // Type names only (never data), to see what a source app wrote.
+            eprintln!("[satchel] capture types={}", formats.join(","));
+        }
         let source_app = ctx.desktop.frontmost_app();
         let format_refs: Vec<&str> = formats.iter().map(String::as_str).collect();
         let gate = CaptureContext {
@@ -115,6 +126,10 @@ impl<S: ClipboardSource> Capturer<S> {
         let Some(payload) = self.source.read(&limits) else {
             return Outcome::Skipped(Skip::Nothing);
         };
+        if let Payload::TooLarge { kind, limit_bytes } = payload {
+            ctx.events.capture_skipped(kind, limit_bytes);
+            return Outcome::Skipped(Skip::TooLarge);
+        }
         let app = source_app.map(|a| SourceApp { id: a.id, name: a.name });
         let Some(clip) = build_clip(payload, app, ctx.policy.as_ref(), &limits) else {
             return Outcome::Skipped(Skip::Nothing);
@@ -148,6 +163,7 @@ pub fn build_clip(
         kind: ClipKind::Text,
         text: None,
         html: None,
+        rtf: None,
         image_png: None,
         thumbnail_png: None,
         file_paths: Vec::new(),
@@ -165,27 +181,36 @@ pub fn build_clip(
             }
             Some(NewClip { kind: ClipKind::File, file_paths, ..empty })
         }
-        Payload::Text { text, html } => {
+        Payload::Text { text, html, rtf } => {
             if text.trim().is_empty() || text.len() as u64 > limits.max_text_bytes {
                 return None;
             }
             let html = html.filter(|h| !h.is_empty() && h.len() as u64 <= limits.max_text_bytes);
+            let rtf = rtf.filter(|r| !r.is_empty() && r.len() as u64 <= limits.max_text_bytes);
             let kind = policy.classify_text(&text);
-            Some(NewClip { kind, text: Some(text), html, ..empty })
+            Some(NewClip { kind, text: Some(text), html, rtf, ..empty })
         }
         Payload::Image { png } => {
             if !limits.images || png.is_empty() || png.len() as u64 > limits.max_image_bytes {
                 return None;
             }
-            // A PNG that cannot be decoded is not stored at all.
-            let thumb = thumbnail::png_thumbnail(&png, THUMBNAIL_MAX_SIDE).ok()?;
+            // A PNG that cannot be decoded is not stored at all. One too big
+            // to thumbnail (an interlaced image whose full frame is over the
+            // thumbnailer's budget) is kept without a thumbnail: the card
+            // shows an image icon and it still pastes.
+            let thumb = match thumbnail::png_thumbnail(&png, THUMBNAIL_MAX_SIDE) {
+                Ok(t) => Some(t),
+                Err(thumbnail::ThumbnailError::TooLarge) => None,
+                Err(_) => return None,
+            };
             Some(NewClip {
                 kind: ClipKind::Image,
                 image_png: Some(png),
-                thumbnail_png: Some(thumb),
+                thumbnail_png: thumb,
                 ..empty
             })
         }
+        Payload::TooLarge { .. } => None,
     }
 }
 
@@ -201,7 +226,7 @@ mod tests {
     const TEXT: &str = "public.utf8-plain-text";
 
     fn text(s: &str) -> Payload {
-        Payload::Text { text: s.into(), html: None }
+        Payload::Text { text: s.into(), html: None, rtf: None }
     }
 
     #[test]
@@ -418,7 +443,7 @@ mod tests {
         #[test]
         fn oversized_html_is_dropped_but_text_kept() {
             let clip = build_clip(
-                Payload::Text { text: "hi".into(), html: Some("<p>far too long</p>".into()) },
+                Payload::Text { text: "hi".into(), html: Some("<p>far too long</p>".into()), rtf: Some(b"{\\rtf1 far too long}".to_vec()) },
                 None,
                 &policy(),
                 &limits(),
@@ -426,6 +451,7 @@ mod tests {
             .unwrap();
             assert_eq!(clip.text.as_deref(), Some("hi"));
             assert_eq!(clip.html, None);
+            assert_eq!(clip.rtf, None);
         }
 
         #[test]
@@ -444,6 +470,20 @@ mod tests {
             let clip = build_clip(Payload::Files(many), None, &policy(), &limits()).unwrap();
             assert_eq!(clip.file_paths.len(), MAX_FILES);
             assert!(build_clip(Payload::Files(vec![]), None, &policy(), &limits()).is_none());
+        }
+
+        #[test]
+        fn images_too_big_to_thumbnail_are_kept_without_one() {
+            // An interlaced PNG whose full frame is over the thumbnailer's
+            // budget: pasteable, just no thumbnail.
+            let w = 4100;
+            let h = 4100;
+            let png = thumbnail::tests::interlaced_png(w, h, [1, 2, 3, 255]);
+            let lim = ReadLimits { max_image_bytes: 100_000_000, ..limits() };
+            let clip = build_clip(Payload::Image { png: png.clone() }, None, &policy(), &lim).unwrap();
+            assert_eq!(clip.kind, ClipKind::Image);
+            assert_eq!(clip.image_png, Some(png));
+            assert_eq!(clip.thumbnail_png, None);
         }
 
         #[test]

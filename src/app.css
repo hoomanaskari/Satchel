@@ -11,6 +11,10 @@
   --panel-bd: rgba(255, 255, 255, 0.7);
   --panel-solid: #f4f4f6;
   --card: #ffffff;
+  /* Inset hairline around each clip card (ClipCard.svelte). It contrasts with the card fill rather
+     than the panel, so a card stays outlined even when the glass panel, which takes on the colour
+     of whatever is behind the shelf, lands on the card's own tone. */
+  --card-edge: rgba(0, 0, 0, 0.11);
   --field: rgba(0, 0, 0, 0.06);
   --field-hover: rgba(0, 0, 0, 0.1);
   --seg-on: #ffffff;
@@ -18,8 +22,14 @@
   --sub: #f0f0f2;
   --overlay: rgba(250, 250, 252, 0.98);
   --danger: #d70015;
+  /* Shelf geometry, mirrored from src-tauri/src/shelf.rs (PANEL_INSET, PANEL_TOP, CORNER_RADIUS,
+     HEIGHT; a test checks they agree). The panel sits --panel-inset from the transparent window's
+     left, right and bottom edges and --panel-top from its top; its shadow must fade out within
+     those margins or the window edge cuts it off. */
   --panel-inset: 12px;
+  --panel-top: 24px;
   --panel-radius: 28px;
+  --shelf-height: 364px;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
@@ -33,6 +43,7 @@
     --panel-bd: rgba(255, 255, 255, 0.16);
     --panel-solid: #252527;
     --card: #2c2c2e;
+    --card-edge: rgba(255, 255, 255, 0.11);
     --field: rgba(255, 255, 255, 0.1);
     --field-hover: rgba(255, 255, 255, 0.16);
     --seg-on: #636366;

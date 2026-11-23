@@ -4,13 +4,13 @@
 // than the search debounce, which exists only while a search is pending.
 
 import { debounce } from "./debounce";
-import { resultLabel, statusLine } from "./format";
+import { resultLabel, skippedNotice } from "./format";
 import type { Api } from "./ipc";
 import type { KeyAction } from "./keyboard";
 import { Pager } from "./paging";
 import type { Filters, KindScope } from "./query";
 import * as sel from "./selection";
-import type { ClipId, ClipKind, ClipSummary, ClipsChanged, Pinboard, PinboardId, Settings } from "./types";
+import type { CaptureSkipped, ClipId, ClipKind, ClipSummary, ClipsChanged, Pinboard, PinboardId, Settings } from "./types";
 
 export type ClickMode = "single" | "toggle" | "range";
 
@@ -35,6 +35,25 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Prefix of the error Rust returns when a paste was refused for lack of the Accessibility permission. */
+export const ACCESSIBILITY_ERROR_PREFIX = "accessibility-permission-required";
+/** Shown in the top bar's notice, beside the button that opens the right System Settings page. */
+export const ACCESSIBILITY_NOTICE =
+  "Copied, not pasted: Satchel needs Accessibility access. If it is already on, remove it and add it again.";
+
+/**
+ * What the top bar's notice says, when something needs the user's attention.
+ * Confirmations of an action are not notices (the action's visible result is
+ * the confirmation); they only go to screen readers (`announcement`). All
+ * notices are alerts (role="alert"). `warning`: something happened that the
+ * user cannot otherwise see (a copy too large to keep). `permission` comes
+ * with the button that opens the Accessibility settings.
+ */
+export interface Notice {
+  text: string;
+  tone: "warning" | "error" | "permission";
+}
+
 export class Shelf {
   text = $state("");
   kind = $state<KindScope>("all");
@@ -53,8 +72,15 @@ export class Shelf {
   previewOpen = $state(false);
   preview = $state.raw<PreviewState | null>(null);
 
-  /** Transient status message; cleared by the next selection change. */
-  flash = $state<string | null>(null);
+  /**
+   * A paste was refused because Satchel lacks the Accessibility permission.
+   * Rust then leaves the shelf up so the shelf can say so and offer the way to grant it.
+   */
+  needsPastePermission = $state(false);
+  /** Transient message (an action's result or error); cleared by the next selection change. */
+  flash = $state.raw<Notice | null>(null);
+  /** The latest action's confirmation, for screen readers only; cleared by the next selection change. */
+  announcement = $state("");
   /** Reference time for relative times; refreshed on load instead of by a timer. */
   now = $state(0);
   visible = $state(true);
@@ -68,6 +94,8 @@ export class Shelf {
   private readonly pager: Pager;
   private readonly search;
   private stale = false;
+  /** Said when the shelf next opens (see `onCaptureSkipped`). */
+  private pendingNotice: Notice | null = null;
   private previewToken = 0;
 
   constructor(opts: ShelfOptions) {
@@ -98,8 +126,27 @@ export class Shelf {
     return f == null ? null : (this.clips.find((c) => c.id === f) ?? null);
   }
 
-  get status(): string {
-    return this.flash ?? this.error ?? statusLine(this.selectedClips, this.now);
+  /**
+   * The top bar's notice, or null when there is nothing to say. The latest
+   * error or warning wins, then the missing permission, then a failed list
+   * load. Confirmations and the selection are never shown: each card shows
+   * its app, kind and time, and the paste buttons count a multi-selection.
+   */
+  get notice(): Notice | null {
+    if (this.flash) return this.flash;
+    if (this.needsPastePermission) return { text: ACCESSIBILITY_NOTICE, tone: "permission" };
+    if (this.error) return { text: this.error, tone: "error" };
+    return null;
+  }
+
+  /** Confirms an action to screen readers; nothing is shown. */
+  say(text: string): void {
+    this.announcement = text;
+  }
+
+  /** Shows an error (messages from Rust never contain clip content). */
+  fail(e: unknown): void {
+    this.flash = { text: message(e), tone: "error" };
   }
 
   get resultLabel(): string {
@@ -118,6 +165,17 @@ export class Shelf {
     return this.settings?.pasteOnSelect ?? true;
   }
 
+  /**
+   * Labels of the paste actions (top-bar buttons, clip menu). They say
+   * "Copy" when selecting only copies, and count a multi-selection when it
+   * is pasted (copying takes the focused clip only, so it is not counted).
+   */
+  get pasteLabels(): { paste: string; plain: string } {
+    const verb = this.pasteOnSelect ? "Paste" : "Copy";
+    const n = this.selection.ids.length;
+    return { paste: this.pasteOnSelect && n > 1 ? `Paste ${n} Clips` : verb, plain: `${verb} as Plain Text` };
+  }
+
   // ---- lifecycle ----
 
   async init(): Promise<() => void> {
@@ -126,12 +184,23 @@ export class Shelf {
       this.api.onPinboardsChanged(() => void this.onPinboardsChanged()),
       this.api.onShelfShown(() => void this.onShown()),
       this.api.onSettingsChanged((s) => (this.settings = s)),
+      this.api.onCaptureSkipped((p) => this.onCaptureSkipped(p)),
     ]);
     await Promise.all([this.loadSettings(), this.loadPinboards(), this.reload()]);
     return () => {
       this.search.cancel();
       for (const stop of stops) stop();
     };
+  }
+
+  /**
+   * A copy was over a size cap and not kept. Said right away when the shelf
+   * is up, otherwise the next time it opens, so the clip is not just missing.
+   */
+  onCaptureSkipped(p: CaptureSkipped): void {
+    const notice: Notice = { text: skippedNotice(p), tone: "warning" };
+    if (this.visible) this.flash = notice;
+    else this.pendingNotice = notice;
   }
 
   setVisible(v: boolean): void {
@@ -146,9 +215,16 @@ export class Shelf {
     this.previewOpen = false;
     this.preview = null;
     this.flash = null;
+    this.announcement = "";
+    this.needsPastePermission = false;
     this.stale = false;
     this.focusSearchTick++;
     await this.reload();
+    // After the reload, whose new selection clears the notice.
+    if (this.pendingNotice) {
+      this.flash = this.pendingNotice;
+      this.pendingNotice = null;
+    }
   }
 
   // ---- loading ----
@@ -164,7 +240,7 @@ export class Shelf {
     try {
       this.settings = await this.api.getSettings();
     } catch (e) {
-      this.flash = message(e);
+      this.fail(e);
     }
   }
 
@@ -172,7 +248,7 @@ export class Shelf {
     try {
       this.pinboards = await this.api.listPinboards();
     } catch (e) {
-      this.flash = message(e);
+      this.fail(e);
     }
   }
 
@@ -228,7 +304,10 @@ export class Shelf {
   private setSelection(s: sel.Selection, clearFlash = true): void {
     const prevFocus = this.selection.focus;
     this.selection = s;
-    if (clearFlash) this.flash = null;
+    if (clearFlash) {
+      this.flash = null;
+      this.announcement = "";
+    }
     if (this.previewOpen && s.focus !== prevFocus) void this.loadPreview();
   }
 
@@ -261,7 +340,7 @@ export class Shelf {
     try {
       await fn();
     } catch (e) {
-      this.flash = message(e);
+      this.fail(e);
     }
   }
 
@@ -273,7 +352,7 @@ export class Shelf {
     await this.flushSearch();
     const ids = this.selectedIds();
     if (ids.length === 0) return;
-    await this.attempt(async () => {
+    try {
       if (!this.pasteOnSelect) {
         // No multi-copy command exists; the focused clip is copied.
         await this.api.copyClip(this.selection.focus ?? ids[0], plain);
@@ -285,9 +364,26 @@ export class Shelf {
       }
       // Seen only where the window stays up (browser development); Rust hides the shelf.
       const what = !this.pasteOnSelect ? "Copied" : ids.length > 1 ? `Pasted ${ids.length} clips` : "Pasted";
-      this.flash = plain ? `${what} as plain text` : what;
+      this.say(plain ? `${what} as plain text` : what);
+      this.needsPastePermission = false;
       this.afterHide();
-    });
+    } catch (e) {
+      const text = message(e);
+      if (text.startsWith(ACCESSIBILITY_ERROR_PREFIX)) {
+        this.needsPastePermission = true;
+        this.flash = null;
+      } else {
+        this.fail(text);
+      }
+    }
+  }
+
+  /** Opens System Settings at the Accessibility list; Rust hides the shelf first. */
+  async openAccessibilitySettings(): Promise<void> {
+    this.search.cancel();
+    await this.attempt(() => this.api.openAccessibilitySettings());
+    this.needsPastePermission = false;
+    this.afterHide();
   }
 
   async pasteNth(n: number, plain: boolean): Promise<void> {
@@ -302,7 +398,7 @@ export class Shelf {
     if (id == null) return;
     await this.attempt(async () => {
       await this.api.copyClip(id, plain);
-      this.flash = "Copied to the clipboard";
+      this.say("Copied to the clipboard");
     });
   }
 
@@ -363,7 +459,7 @@ export class Shelf {
     if (!pin && this.pinboardId === boardId) this.removeLocally(ids);
     const board = this.pinboards.find((p) => p.id === boardId);
     const what = ids.length === 1 ? "Clip" : `${ids.length} clips`;
-    this.flash = `${what} ${pin ? "pinned to" : "removed from"} ${board?.name ?? "pinboard"}`;
+    this.say(`${what} ${pin ? "pinned to" : "removed from"} ${board?.name ?? "pinboard"}`);
   }
 
   private removeLocally(ids: ClipId[]): void {
@@ -386,7 +482,7 @@ export class Shelf {
       } finally {
         if (done.length) this.removeLocally(done);
       }
-      this.flash = done.length === 1 ? "Deleted 1 clip" : `Deleted ${done.length} clips`;
+      this.say(done.length === 1 ? "Deleted 1 clip" : `Deleted ${done.length} clips`);
     });
   }
 
@@ -429,7 +525,7 @@ export class Shelf {
     try {
       text = await this.api.getClipText(clip.id);
     } catch (e) {
-      this.flash = message(e);
+      this.fail(e);
     }
     if (token !== this.previewToken) return;
     this.preview = { id: clip.id, kind: clip.kind, text: text ?? clip.preview, loading: false };

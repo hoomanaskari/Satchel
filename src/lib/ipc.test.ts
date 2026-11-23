@@ -50,6 +50,11 @@ describe("commands", () => {
     ["hideShelf", () => ipc.hideShelf(), "hide_shelf", undefined],
     ["openSettings", () => ipc.openSettings(), "open_settings", undefined],
     ["closeSettings", () => ipc.closeSettings(), "close_settings", undefined],
+    ["openAccessibilitySettings", () => ipc.openAccessibilitySettings(), "open_accessibility_settings", undefined],
+    ["listApps", () => ipc.listApps(), "list_apps", undefined],
+    ["resolveApps", () => ipc.resolveApps(["com.apple.Notes"]), "resolve_apps", { ids: ["com.apple.Notes"] }],
+    ["getAppIcon", () => ipc.getAppIcon("com.apple.Notes"), "get_app_icon", { id: "com.apple.Notes" }],
+    ["chooseApp", () => ipc.chooseApp(), "choose_app", undefined],
   ];
 
   it.each(cases)("%s invokes the contract command with camelCase args", async (_n, call, cmd, args) => {
@@ -90,12 +95,21 @@ describe("getClipThumbnail", () => {
   });
 });
 
+describe("getAppIcon", () => {
+  it("normalizes the PNG bytes like thumbnails", async () => {
+    const { t } = fakeTransport([137, 80]);
+    ipc.setTransport(t);
+    expect(Array.from(await ipc.getAppIcon("a.b"))).toEqual([137, 80]);
+  });
+});
+
 describe("events", () => {
   it.each([
     ["onClipsChanged", ipc.onClipsChanged, "clips-changed", { reason: "inserted", id: 3 }],
     ["onPinboardsChanged", ipc.onPinboardsChanged, "pinboards-changed", null],
     ["onShelfShown", ipc.onShelfShown, "shelf-shown", null],
     ["onSettingsChanged", ipc.onSettingsChanged, "settings-changed", settings],
+    ["onCaptureSkipped", ipc.onCaptureSkipped, "capture-skipped", { kind: "image", limitBytes: 64_000_000 }],
   ] as const)("%s listens to %s and hands over the payload", async (_n, fn, event, payload) => {
     const { t, handlers, unlisten } = fakeTransport();
     ipc.setTransport(t);

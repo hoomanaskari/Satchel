@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-apps"
+description = "Enables the resolve_apps command without any pre-configured scope."
+commands.allow = ["resolve_apps"]
+
+[[permission]]
+identifier = "deny-resolve-apps"
+description = "Denies the resolve_apps command without any pre-configured scope."
+commands.deny = ["resolve_apps"]

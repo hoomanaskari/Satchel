@@ -14,6 +14,7 @@ use satchel_core::{ClipId, ClipKind, ClipSummary, Pinboard, PinboardId, Query, S
 
 use crate::ctx::Ctx;
 use crate::error::CmdResult;
+use crate::platform::AppInfo;
 
 pub mod api {
     use super::*;
@@ -170,8 +171,42 @@ pub mod api {
         ctx.settings_window.open(return_to);
     }
 
+    /// Hides the shelf (System Settings takes focus) and opens the page
+    /// where the paste permission is granted.
+    pub fn open_accessibility_settings(ctx: &Ctx) {
+        ctx.shelf.hide();
+        ctx.desktop.open_keystroke_permission_settings();
+    }
+
     pub fn close_settings(ctx: &Ctx) {
         ctx.settings_window.close();
+    }
+
+    /// Candidates for the excluded-apps picker: installed apps and running
+    /// regular apps, one per id, sorted by name.
+    pub fn list_apps(ctx: &Ctx) -> Vec<AppInfo> {
+        crate::apps::merge(ctx.apps.installed_apps(), ctx.apps.running_apps())
+    }
+
+    /// The installed app for each id, in request order (`None`: not on this
+    /// machine).
+    pub fn resolve_apps(ctx: &Ctx, ids: &[String]) -> CmdResult<Vec<Option<AppInfo>>> {
+        let ids = validate::app_ids(ids)?;
+        Ok(ids.iter().map(|id| ctx.apps.find_app(id)).collect())
+    }
+
+    /// The app's icon as PNG (`ICON_PX` square), cached.
+    pub fn get_app_icon(ctx: &Ctx, id: &str) -> CmdResult<Vec<u8>> {
+        let id = validate::app_id(id)?;
+        ctx.app_icons
+            .get_or_render(&id, || ctx.apps.icon_png(&id, crate::apps::ICON_PX))
+            .map(|png| png.as_ref().clone())
+            .ok_or_else(|| error::NOT_FOUND.to_string())
+    }
+
+    /// The native "choose an application" dialog; `None` when cancelled.
+    pub fn choose_app(ctx: &Ctx) -> Option<AppInfo> {
+        ctx.apps.choose_app()
     }
 }
 
@@ -296,9 +331,40 @@ pub async fn open_settings(ctx: Ctxs<'_>) -> CmdResult<()> {
     .await
 }
 
+#[tauri::command]
+pub async fn open_accessibility_settings(ctx: Ctxs<'_>) -> CmdResult<()> {
+    blocking(&ctx, |c| {
+        api::open_accessibility_settings(c);
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command(async)]
 pub fn close_settings(ctx: Ctxs<'_>) {
     api::close_settings(&ctx);
+}
+
+#[tauri::command]
+pub async fn list_apps(ctx: Ctxs<'_>) -> CmdResult<Vec<AppInfo>> {
+    blocking(&ctx, |c| Ok(api::list_apps(c))).await
+}
+
+#[tauri::command]
+pub async fn resolve_apps(ctx: Ctxs<'_>, ids: Vec<String>) -> CmdResult<Vec<Option<AppInfo>>> {
+    blocking(&ctx, move |c| api::resolve_apps(c, &ids)).await
+}
+
+/// Raw PNG bytes, like `get_clip_thumbnail`.
+#[tauri::command]
+pub async fn get_app_icon(ctx: Ctxs<'_>, id: String) -> CmdResult<Response> {
+    blocking(&ctx, move |c| api::get_app_icon(c, &id)).await.map(Response::new)
+}
+
+/// Waits (off the main thread) for the open panel, which runs on it.
+#[tauri::command]
+pub async fn choose_app(ctx: Ctxs<'_>) -> CmdResult<Option<AppInfo>> {
+    blocking(&ctx, |c| Ok(api::choose_app(c))).await
 }
 
 #[cfg(test)]
@@ -482,6 +548,13 @@ mod tests {
     }
 
     #[test]
+    fn open_accessibility_settings_hides_the_shelf_then_opens_the_page() {
+        let h = Harness::new();
+        api::open_accessibility_settings(&h.ctx);
+        assert_eq!(h.log.entries(), vec!["hide shelf", "open accessibility settings"]);
+    }
+
+    #[test]
     fn open_settings_falls_back_to_the_app_the_shelf_remembered() {
         // Satchel itself is in front (e.g. the shelf as a regular window).
         let h = Harness::new();
@@ -504,6 +577,41 @@ mod tests {
         let h = Harness::new();
         api::close_settings(&h.ctx);
         assert_eq!(h.log.entries(), vec!["close settings"]);
+    }
+
+    #[test]
+    fn list_apps_merges_installed_and_running_apps() {
+        let h = Harness::new();
+        let apps = api::list_apps(&h.ctx);
+        let summary: Vec<_> = apps.iter().map(|a| (a.name.as_str(), a.running)).collect();
+        assert_eq!(summary, vec![("Notes", true), ("TextEdit", false), ("Vault", false)]);
+    }
+
+    #[test]
+    fn resolve_apps_answers_in_request_order() {
+        let h = Harness::new();
+        let ids = vec!["com.example.vault".to_string(), "1Password.exe".into(), "com.apple.Notes".into()];
+        let resolved = api::resolve_apps(&h.ctx, &ids).unwrap();
+        let names: Vec<_> = resolved.iter().map(|a| a.as_ref().map(|a| a.name.as_str())).collect();
+        assert_eq!(names, vec![Some("Vault"), None, Some("Notes")]);
+        assert!(api::resolve_apps(&h.ctx, &["bad\u{7}".into()]).is_err());
+    }
+
+    #[test]
+    fn app_icons_are_cached_and_missing_ones_are_not_found() {
+        let h = Harness::new();
+        assert_eq!(api::get_app_icon(&h.ctx, " com.apple.TextEdit ").unwrap(), b"png:com.apple.TextEdit".to_vec());
+        assert_eq!(api::get_app_icon(&h.ctx, "com.apple.textedit").unwrap(), b"png:com.apple.TextEdit".to_vec());
+        assert_eq!(api::get_app_icon(&h.ctx, "1Password.exe").unwrap_err(), error::NOT_FOUND);
+        assert!(api::get_app_icon(&h.ctx, "").is_err());
+        let renders: Vec<_> = h.log.entries().into_iter().filter(|e| e.starts_with("icon ")).collect();
+        assert_eq!(renders, vec!["icon com.apple.TextEdit 64", "icon 1Password.exe 64"]);
+    }
+
+    #[test]
+    fn choose_app_passes_the_dialog_result_through() {
+        let h = Harness::new();
+        assert_eq!(api::choose_app(&h.ctx).map(|a| a.id), Some("com.example.chosen".into()));
     }
 
     #[test]

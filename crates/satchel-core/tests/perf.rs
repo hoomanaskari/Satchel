@@ -78,6 +78,7 @@ fn clip(rng: &mut Rng, words: &[String], i: usize) -> NewClip {
         kind,
         text: Some(text),
         html: None,
+        rtf: None,
         image_png: None,
         thumbnail_png: None,
         file_paths: vec![],

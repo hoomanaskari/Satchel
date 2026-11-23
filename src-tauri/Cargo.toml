@@ -37,8 +37,10 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
   "std",
   "NSArray",
+  "NSBundle",
   "NSData",
   "NSDictionary",
+  "NSFileManager",
   "NSString",
   "NSURL",
   "NSValue",
@@ -48,13 +50,24 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "std",
   "libc",
+  # CGFloat setters such as NSGlassEffectView.cornerRadius.
+  "objc2-core-foundation",
   "NSAlert",
   "NSApplication",
   "NSBitmapImageRep",
   "NSButton",
+  # Colors copied from color wells and pickers (NSColor on the pasteboard).
+  "NSColor",
+  "NSColorSpace",
   "NSControl",
+  "NSGlassEffectView",
   "NSGraphics",
+  # App icons for the excluded-apps picker, and its "Choose…" open panel.
+  "NSGraphicsContext",
+  "NSImage",
   "NSImageRep",
+  "NSOpenPanel",
+  "NSSavePanel",
   "NSPanel",
   "NSPasteboard",
   "NSPasteboardItem",

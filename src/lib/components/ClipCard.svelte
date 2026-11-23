@@ -1,8 +1,10 @@
 <script lang="ts">
   // One clip card. Clip content only ever reaches text nodes, `alt=""`
   // images from our own blob URLs, and validated hex colors.
+  import AppIcon from "./AppIcon.svelte";
   import Icon from "./Icon.svelte";
-  import { appInitial, appTileColor, cardLabel, cardPreview, kindLabel, relativeTime } from "$lib/format";
+  import type { AppIconCache } from "$lib/app-icons";
+  import { appTileColor, cardLabel, cardPreview, kindLabel, relativeTime } from "$lib/format";
   import type { ThumbnailCache } from "$lib/thumbs";
   import type { ClipSummary } from "$lib/types";
   import type { ClickMode } from "$lib/shelf.svelte";
@@ -18,6 +20,7 @@
     now: number;
     renaming: boolean;
     thumbs: ThumbnailCache;
+    icons: AppIconCache | null;
     onselect: (mode: ClickMode) => void;
     onpaste: () => void;
     onpin: (anchor: HTMLElement) => void;
@@ -25,7 +28,7 @@
     onrename: (title: string | null) => void;
   }
 
-  let { clip, selected, current, pinned, shortcut, now, renaming, thumbs, onselect, onpaste, onpin, onmenu, onrename }: Props =
+  let { clip, selected, current, pinned, shortcut, now, renaming, thumbs, icons, onselect, onpaste, onpin, onmenu, onrename }: Props =
     $props();
 
   const p = $derived(cardPreview(clip));
@@ -91,7 +94,7 @@
 
 <article class="card" class:selected>
   <div class="head">
-    <span class="tile" aria-hidden="true" style:background-color={appTileColor(clip.sourceApp)}>{appInitial(clip.sourceApp)}</span>
+    <AppIcon {icons} id={clip.sourceApp?.id ?? null} label={clip.sourceApp?.name ?? "?"} tint={appTileColor(clip.sourceApp)} size={22} />
     <span class="app">{appName}</span>
     <button
       type="button"
@@ -157,7 +160,10 @@
     height: 236px;
     background: var(--card);
     border-radius: 18px;
+    /* The edge is an inset shadow, not a border: it takes no room, so the
+       card's size and layout are unchanged. */
     box-shadow:
+      inset 0 0 0 1px var(--card-edge),
       0 1px 3px rgba(0, 0, 0, 0.1),
       0 6px 16px rgba(0, 0, 0, 0.06);
     display: flex;
@@ -167,6 +173,7 @@
   }
   .card.selected {
     box-shadow:
+      inset 0 0 0 1px var(--card-edge),
       0 0 0 3px var(--accent),
       0 1px 3px rgba(0, 0, 0, 0.1),
       0 6px 16px rgba(0, 0, 0, 0.06);
@@ -174,21 +181,9 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 6px 0 12px;
+    gap: 6px;
+    padding: 10px 6px 0 10px;
     height: 32px;
-    flex: none;
-  }
-  .tile {
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     flex: none;
   }
   .app {

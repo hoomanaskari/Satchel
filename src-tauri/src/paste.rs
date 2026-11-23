@@ -104,15 +104,17 @@ pub fn dismiss_shelf(ctx: &Ctx) {
 }
 
 /// Pastes the clips, in order, into the app that was in front when the shelf
-/// opened. Without the keystroke permission it copies instead and returns
-/// the `ACCESSIBILITY` error so the UI can explain.
+/// opened. Without the keystroke permission it copies instead, leaves the
+/// shelf up and returns the `ACCESSIBILITY` error so the UI can explain and
+/// offer the way to grant it. (Hiding first would make the failure silent:
+/// macOS shows its own prompt only once, and never when Satchel is already
+/// listed under Accessibility with a grant that no longer matches the build.)
 pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<()> {
     let _one_at_a_time = ctx.paste_lock.lock().unwrap_or_else(|p| p.into_inner());
     // Everything is loaded before anything visible happens, so a bad id
     // leaves the shelf and the clipboard untouched.
     let requests = load(ctx, ids, plain)?;
     let target = ctx.previous_app();
-    ctx.shelf.hide();
 
     let allowed = ctx.desktop.can_post_keystrokes();
     if crate::shelf::tracing() {
@@ -126,15 +128,13 @@ pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<()> {
                 bump(ctx, *id);
             }
         }
-        if let Some(pid) = target {
-            restore_focus(ctx, pid);
-        }
         if ctx.take_accessibility_prompt() {
             ctx.desktop.request_keystroke_permission();
         }
         return Err(error::ACCESSIBILITY.to_string());
     }
 
+    ctx.shelf.hide();
     if let Some(pid) = target {
         let restored = restore_focus(ctx, pid);
         if crate::shelf::tracing() {
@@ -282,6 +282,10 @@ mod tests {
         assert!(entries.contains(&"write text:one\ntwo".to_string()));
         assert!(!entries.contains(&"keystroke paste".to_string()));
         assert_eq!(entries.iter().filter(|e| *e == "prompt accessibility").count(), 1);
+        // The shelf stays up so the explanation is seen: hiding it made a
+        // refused paste (double-click, Return, menu) look like nothing.
+        assert!(!entries.contains(&"hide shelf".to_string()));
+        assert!(!entries.iter().any(|e| e.starts_with("activate")));
 
         h.log.clear();
         assert!(paste_clips(&h.ctx, &[a], false).is_err());

@@ -18,6 +18,24 @@ pub const MAX_RETENTION_DAYS: u32 = 3650;
 pub const MAX_EXCLUDED_APPS: usize = 500;
 pub const MAX_APP_ID_CHARS: usize = 255;
 
+/// One app id as stored in the excluded-app list (trimmed).
+pub fn app_id(raw: &str) -> CmdResult<String> {
+    let id = raw.trim();
+    if id.is_empty() || id.chars().count() > MAX_APP_ID_CHARS || has_control_chars(id) {
+        return Err(invalid("appId"));
+    }
+    Ok(id.to_string())
+}
+
+/// Up to `MAX_EXCLUDED_APPS` app ids, order kept (answers line up with the
+/// request).
+pub fn app_ids(raw: &[String]) -> CmdResult<Vec<String>> {
+    if raw.len() > MAX_EXCLUDED_APPS {
+        return Err(invalid("appIds"));
+    }
+    raw.iter().map(|id| app_id(id)).collect()
+}
+
 pub fn id(value: i64) -> CmdResult<i64> {
     if value > 0 {
         Ok(value)
@@ -126,12 +144,9 @@ pub fn settings(mut s: Settings) -> CmdResult<Settings> {
     }
     let mut ids: Vec<String> = Vec::with_capacity(s.excluded_app_ids.len());
     for raw in &s.excluded_app_ids {
-        let id = raw.trim();
-        if id.is_empty() || id.chars().count() > MAX_APP_ID_CHARS || has_control_chars(id) {
-            return Err(invalid("excludedAppIds"));
-        }
-        if !ids.iter().any(|known| known == id) {
-            ids.push(id.to_string());
+        let id = app_id(raw).map_err(|_| invalid("excludedAppIds"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
         }
     }
     s.excluded_app_ids = ids;
@@ -143,6 +158,17 @@ pub fn settings(mut s: Settings) -> CmdResult<Settings> {
 mod tests {
     use super::*;
     use crate::testing::sample_settings;
+
+    #[test]
+    fn app_ids_are_trimmed_bounded_and_free_of_control_characters() {
+        assert_eq!(app_id(" com.apple.TextEdit "), Ok("com.apple.TextEdit".into()));
+        assert!(app_id("   ").is_err());
+        assert!(app_id("a\nb").is_err());
+        assert!(app_id(&"x".repeat(MAX_APP_ID_CHARS + 1)).is_err());
+        assert_eq!(app_ids(&["a.b".into(), " c.d".into()]), Ok(vec!["a.b".into(), "c.d".into()]));
+        assert!(app_ids(&vec!["a.b".to_string(); MAX_EXCLUDED_APPS + 1]).is_err());
+        assert!(app_ids(&["a.b".into(), "".into()]).is_err());
+    }
 
     #[test]
     fn ids_must_be_positive() {

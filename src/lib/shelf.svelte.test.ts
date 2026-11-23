@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, setTransport } from "./ipc";
 import { createMockBackend, type MockBackend } from "./mock/backend";
-import { Shelf } from "./shelf.svelte";
+import { ACCESSIBILITY_NOTICE, Shelf } from "./shelf.svelte";
 
 let mock: MockBackend;
 let shelf: Shelf;
@@ -37,7 +37,9 @@ describe("startup", () => {
     expect(shelf.clips).toHaveLength(20);
     expect(shelf.hasMore).toBe(true);
     expect(shelf.selection.ids).toEqual([shelf.clips[0].id]);
-    expect(shelf.status).toMatch(/^Copied from Notes · /);
+    // Nothing to say yet: the top bar's notice is hidden.
+    expect(shelf.notice).toBeNull();
+    expect(shelf.pasteLabels).toEqual({ paste: "Paste", plain: "Paste as Plain Text" });
   });
 });
 
@@ -102,7 +104,9 @@ describe("selection", () => {
     shelf.select(a, "single");
     shelf.select(c, "range");
     expect(shelf.selection.ids).toEqual([a, shelf.clips[1].id, c]);
-    expect(shelf.status).toBe("3 clips selected");
+    // The selection is not narrated; the paste buttons count it instead.
+    expect(shelf.notice).toBeNull();
+    expect(shelf.pasteLabels).toEqual({ paste: "Paste 3 Clips", plain: "Paste as Plain Text" });
   });
 
   it("moves with the arrows and jumps to the ends", () => {
@@ -126,7 +130,8 @@ describe("paste and copy", () => {
     shelf.select(id, "single");
     await shelf.paste(true);
     expect(lastOf("paste_clip")!.args).toEqual({ id, plainText: true });
-    expect(shelf.status).toBe("Pasted as plain text");
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toBe("Pasted as plain text");
   });
 
   it("pastes a multi-selection in list order with paste_clips", async () => {
@@ -136,7 +141,7 @@ describe("paste and copy", () => {
     shelf.select(b, "toggle");
     await shelf.paste(false);
     expect(lastOf("paste_clips")!.args).toEqual({ ids: [a, b, c], plainText: false });
-    expect(shelf.status).toBe("Pasted 3 clips");
+    expect(shelf.announcement).toBe("Pasted 3 clips");
   });
 
   it("only copies and hides when paste-on-select is off", async () => {
@@ -146,6 +151,15 @@ describe("paste and copy", () => {
     await shelf.paste(false);
     expect(cmds().slice(-2)).toEqual(["copy_clip", "hide_shelf"]);
     expect(lastOf("copy_clip")!.args).toEqual({ id, plainText: false });
+  });
+
+  it("labels the paste actions Copy, uncounted, when paste-on-select is off", async () => {
+    await api.saveSettings({ ...shelf.settings!, pasteOnSelect: false });
+    await flush();
+    shelf.select(shelf.clips[0].id, "single");
+    shelf.select(shelf.clips[1].id, "toggle");
+    // Copying takes the focused clip only, so the label must not promise two.
+    expect(shelf.pasteLabels).toEqual({ paste: "Copy", plain: "Copy as Plain Text" });
   });
 
   it("Cmd+n pastes the nth clip from the first visible one", async () => {
@@ -163,7 +177,71 @@ describe("paste and copy", () => {
   it("copies without pasting or hiding", async () => {
     await shelf.copy(false);
     expect(cmds().at(-1)).toBe("copy_clip");
-    expect(shelf.status).toBe("Copied to the clipboard");
+    // Not shown (the clipboard is the confirmation), only announced; cleared by the next selection change.
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toBe("Copied to the clipboard");
+    shelf.move(1, false);
+    expect(shelf.announcement).toBe("");
+  });
+
+  it("explains a paste refused for lack of Accessibility and offers the settings page", async () => {
+    // Double-click, Return and the menu all end in shelf.paste. Without the
+    // permission Rust copies, leaves the shelf up and returns this error;
+    // it used to vanish with the hidden shelf, so nothing seemed to happen.
+    mock.setPastePermission(false);
+    const id = shelf.clips[1].id;
+    shelf.select(id, "single");
+    await shelf.paste(false);
+    expect(lastOf("paste_clip")!.args).toEqual({ id, plainText: false });
+    expect(shelf.needsPastePermission).toBe(true);
+    expect(shelf.notice).toEqual({ text: ACCESSIBILITY_NOTICE, tone: "permission" });
+    expect(shelf.notice?.text).not.toContain("accessibility-permission-required");
+    // The notice outlives a selection change; the button stays with it.
+    shelf.select(shelf.clips[0].id, "single");
+    expect(shelf.notice?.tone).toBe("permission");
+  });
+
+  it("a failed list load stays in the notice as an error", async () => {
+    setTransport({
+      invoke: async (cmd, args) => {
+        if (cmd === "list_clips") throw "database is locked";
+        return mock.transport.invoke(cmd, args);
+      },
+      listen: mock.transport.listen,
+    });
+    await shelf.reload();
+    expect(shelf.notice).toEqual({ text: "database is locked", tone: "error" });
+    // Not a transient message: a selection change does not hide it.
+    shelf.move(1, false);
+    expect(shelf.notice?.tone).toBe("error");
+
+    await shelf.openAccessibilitySettings();
+    expect(cmds().at(-1)).toBe("open_accessibility_settings");
+    expect(shelf.needsPastePermission).toBe(false);
+  });
+
+  it("a multi-paste refused for lack of Accessibility explains the same way", async () => {
+    mock.setPastePermission(false);
+    const [a, b] = shelf.clips.map((x) => x.id);
+    shelf.select(a, "single");
+    shelf.select(b, "toggle");
+    await shelf.paste(false);
+    expect(shelf.needsPastePermission).toBe(true);
+  });
+
+  it("the Accessibility notice is cleared when the shelf opens again or a paste works", async () => {
+    mock.setPastePermission(false);
+    await shelf.paste(false);
+    expect(shelf.needsPastePermission).toBe(true);
+    await shelf.onShown();
+    expect(shelf.needsPastePermission).toBe(false);
+
+    await shelf.paste(false);
+    mock.setPastePermission(true);
+    await shelf.paste(false);
+    expect(shelf.needsPastePermission).toBe(false);
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toBe("Pasted");
   });
 
   it("does nothing without a selection", async () => {
@@ -185,8 +263,13 @@ describe("pin, delete, rename", () => {
     await shelf.togglePin();
     expect(lastOf("pin_clip")!.args).toEqual({ clipId: clip.id, pinboardId: 1 });
     expect(shelf.clips.find((c) => c.id === clip.id)!.pinboardIds).toContain(1);
+    // The pin itself is the confirmation: nothing in the top bar, only announced.
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toMatch(/pinned to Snippets$/);
     await shelf.togglePin();
     expect(lastOf("unpin_clip")!.args).toEqual({ clipId: clip.id, pinboardId: 1 });
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toMatch(/removed from Snippets$/);
   });
 
   it("creates a pinboard when pinning with none", async () => {
@@ -230,7 +313,8 @@ describe("pin, delete, rename", () => {
     expect(mock.log.filter((l) => l.cmd === "delete_clip").map((l) => l.args)).toEqual([{ id: a }, { id: b }]);
     expect(shelf.clips[0].id).toBe(c);
     expect(shelf.selection.ids).toEqual([c]);
-    expect(shelf.status).toBe("Deleted 2 clips");
+    expect(shelf.notice).toBeNull();
+    expect(shelf.announcement).toBe("Deleted 2 clips");
   });
 
   it("renames a clip; blank clears the title", async () => {
@@ -324,6 +408,27 @@ describe("events", () => {
     expect(shelf.focusSearchTick).toBeGreaterThan(0);
   });
 
+  it("says when a copy was too large to keep: now when shown, else on the next open", async () => {
+    mock.simulateOversizedCopy("image", 64_000_000);
+    expect(shelf.notice).toEqual({
+      text: "An image you copied was not kept: it is over Satchel's 64 MB limit.",
+      tone: "warning",
+    });
+    shelf.setVisible(false);
+    mock.simulateOversizedCopy("image", 64_000_000);
+    mock.show();
+    await flush();
+    await flush();
+    expect(shelf.notice?.text).toBe("An image you copied was not kept: it is over Satchel's 64 MB limit.");
+    // Said once: the next selection change clears it and the next open does not repeat it.
+    shelf.select(shelf.clips[1].id, "single");
+    expect(shelf.notice).toBeNull();
+    mock.show();
+    await flush();
+    await flush();
+    expect(shelf.notice).toBeNull();
+  });
+
   it("reloads pinboards and leaves a pinboard tab that vanished", async () => {
     await shelf.setTab(2);
     await mock.transport.invoke("delete_pinboard", { id: 2 });
@@ -357,7 +462,7 @@ describe("close and errors", () => {
     expect(cmds().at(-1)).toBe("hide_shelf");
   });
 
-  it("shows command errors in the status line", async () => {
+  it("shows command errors in the top bar's notice, as errors", async () => {
     setTransport({
       invoke: async (cmd) => {
         if (cmd === "copy_clip") throw "clipboard unavailable";
@@ -366,9 +471,18 @@ describe("close and errors", () => {
       listen: mock.transport.listen,
     });
     await shelf.copy(false);
-    expect(shelf.status).toBe("clipboard unavailable");
+    expect(shelf.notice).toEqual({ text: "clipboard unavailable", tone: "error" });
+    // Cleared by the next selection change, leaving nothing to say.
     shelf.move(1, false);
-    expect(shelf.status).toMatch(/^Copied from /);
+    expect(shelf.notice).toBeNull();
+  });
+
+  it("a confirmation leaves the Accessibility notice in place", async () => {
+    mock.setPastePermission(false);
+    await shelf.paste(false);
+    await shelf.copy(false);
+    expect(shelf.notice?.tone).toBe("permission");
+    expect(shelf.announcement).toBe("Copied to the clipboard");
   });
 });
 

@@ -1,6 +1,7 @@
 //! Satchel's Tauri application layer: clipboard watcher, paste, global
 //! shortcut, tray, the shelf and settings windows and the IPC commands.
 
+mod apps;
 mod capture;
 mod clipboard;
 mod commands;
@@ -30,12 +31,12 @@ use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_global_shortcut::ShortcutState;
 
-use satchel_core::{ClipId, Settings, Store};
+use satchel_core::{ClipId, ClipKind, Settings, Store};
 
 use crate::clipboard::{SelfWrites, SystemClipboardSink};
 use crate::ctx::{CorePolicy, Ctx};
-use crate::events::{ChangeReason, ClipsChanged, EventSink};
-use crate::platform::{SystemClock, SystemDesktop};
+use crate::events::{CaptureSkipped, ChangeReason, ClipsChanged, EventSink};
+use crate::platform::{SystemApps, SystemClock, SystemDesktop};
 use crate::settings_window::TauriSettingsWindow;
 use crate::shelf::{Shelf, TauriShelf};
 use crate::shortcut::{ShortcutRegistrar, TauriShortcuts};
@@ -60,6 +61,9 @@ impl<R: Runtime> EventSink for TauriEvents<R> {
         if let Some(item) = self.app.try_state::<tray::PauseItem<R>>() {
             let _ = item.0.set_checked(settings.capture_paused);
         }
+    }
+    fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64) {
+        let _ = self.app.emit(events::CAPTURE_SKIPPED, CaptureSkipped { kind, limit_bytes });
     }
 }
 
@@ -106,6 +110,8 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
     let store = open_store(app);
     let settings = store.settings().unwrap_or_default();
     let shortcuts: Arc<dyn ShortcutRegistrar> = Arc::new(TauriShortcuts { app: app.clone() });
+    let main_app = app.clone();
+    let apps = SystemApps::new(Box::new(move |f| main_app.run_on_main_thread(f).is_ok()));
     let ctx = Arc::new(Ctx {
         store: SharedStore::new(store),
         settings: RwLock::new(settings.clone()),
@@ -118,6 +124,8 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         settings_window: Arc::new(TauriSettingsWindow::new(app.clone())),
         shortcuts: shortcuts.clone(),
         clock: Arc::new(SystemClock),
+        apps: Arc::new(apps),
+        app_icons: Default::default(),
         previous_app: Mutex::new(None),
         paste_lock: Mutex::new(()),
         accessibility_prompted: AtomicBool::new(false),
@@ -168,6 +176,7 @@ pub fn run() {
             commands::get_clip_thumbnail,
             commands::paste_clip,
             commands::paste_clips,
+            commands::open_accessibility_settings,
             commands::copy_clip,
             commands::delete_clip,
             commands::set_clip_title,
@@ -184,6 +193,10 @@ pub fn run() {
             commands::hide_shelf,
             commands::open_settings,
             commands::close_settings,
+            commands::list_apps,
+            commands::resolve_apps,
+            commands::get_app_icon,
+            commands::choose_app,
         ])
         .setup(|app| setup(app.handle()))
         .build(tauri::generate_context!())

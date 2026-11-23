@@ -98,11 +98,12 @@
     border-radius: 10px;
     padding: 2px;
     height: 36px;
-    min-width: 0;
+    /* Shrinks with the top bar (scrolling sideways), but keeps a tab in view. */
+    min-width: 120px;
     max-width: 46vw;
     overflow-x: auto;
     scrollbar-width: none;
-    flex: none;
+    flex: 0 1 auto;
   }
   .seg::-webkit-scrollbar {
     display: none;

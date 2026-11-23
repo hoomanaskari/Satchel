@@ -108,8 +108,15 @@ fn open_on_main<R: Runtime>(app: &AppHandle<R>, slot: &Arc<Mutex<Option<i32>>>, 
     };
 
     let slot = slot.clone();
+    let app_handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
+            // The settings window asks for hundreds of icons; give their memory back.
+            // The shelf keeps its own few (one per source app) as blob URLs, so it
+            // does not need these.
+            if let Some(ctx) = app_handle.try_state::<Arc<crate::ctx::Ctx>>() {
+                ctx.app_icons.clear();
+            }
             let return_to = slot.lock().unwrap_or_else(|p| p.into_inner()).take();
             restore_focus(return_to);
         }

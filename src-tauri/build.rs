@@ -22,6 +22,11 @@ const COMMANDS: &[&str] = &[
     "hide_shelf",
     "open_settings",
     "close_settings",
+    "open_accessibility_settings",
+    "list_apps",
+    "resolve_apps",
+    "get_app_icon",
+    "choose_app",
 ];
 
 fn main() {

@@ -11,7 +11,7 @@ import {
   relativeTime,
   resultLabel,
   safeHexColor,
-  statusLine,
+  skippedNotice,
 } from "./format";
 import type { ClipSummary } from "./types";
 
@@ -132,6 +132,12 @@ describe("cardPreview", () => {
     });
   });
 
+  it("image: body leads with the pixel size when known", () => {
+    expect(cardPreview(clip({ kind: "image", preview: "1920 × 1080", byteSize: 2_400_000 })).body).toBe(
+      "1920 × 1080 · 2.4 MB",
+    );
+  });
+
   it("file: first name is the heading, the rest listed or counted", () => {
     expect(cardPreview(clip({ kind: "file", preview: "roadmap-q1.pdf" }))).toMatchObject({
       head: "roadmap-q1.pdf",
@@ -160,10 +166,10 @@ describe("cardLabel", () => {
 
 describe("app tile", () => {
   it("initial is the first letter, ? when unknown", () => {
-    expect(appInitial({ id: "a", name: "safari" })).toBe("S");
+    expect(appInitial("safari")).toBe("S");
     expect(appInitial(null)).toBe("?");
-    expect(appInitial({ id: "a", name: "  " })).toBe("?");
-    expect(appInitial({ id: "a", name: "Élan" })).toBe("É");
+    expect(appInitial("  ")).toBe("?");
+    expect(appInitial("Élan")).toBe("É");
   });
 
   it("tile color is stable per app id and a valid hex", () => {
@@ -174,14 +180,7 @@ describe("app tile", () => {
   });
 });
 
-describe("status and result labels", () => {
-  it("describes the selection", () => {
-    expect(statusLine([], NOW)).toBe("No Selection");
-    expect(statusLine([clip()], NOW)).toBe("Copied from Notes · Now");
-    expect(statusLine([clip({ sourceApp: null })], NOW)).toBe("Copied · Now");
-    expect(statusLine([clip(), clip({ id: 2 })], NOW)).toBe("2 clips selected");
-  });
-
+describe("result labels", () => {
   it("counts results, marking more pages", () => {
     expect(resultLabel(0, false)).toBe("0 items");
     expect(resultLabel(1, false)).toBe("1 item");
@@ -209,5 +208,16 @@ describe("previewText", () => {
   it("keeps short text and cuts very long text for the large preview", () => {
     expect(previewText("abc", 10)).toEqual({ text: "abc", truncated: false });
     expect(previewText("abcdefghijkl", 10)).toEqual({ text: "abcdefghij", truncated: true });
+  });
+});
+
+describe("skippedNotice", () => {
+  it("names the kind and the limit", () => {
+    expect(skippedNotice({ kind: "image", limitBytes: 64_000_000 })).toBe(
+      "An image you copied was not kept: it is over Satchel's 64 MB limit.",
+    );
+    expect(skippedNotice({ kind: "text", limitBytes: 2_097_152 })).toBe(
+      "Text you copied was not kept: it is over Satchel's 2.1 MB limit.",
+    );
   });
 });

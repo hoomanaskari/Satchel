@@ -117,6 +117,16 @@ fn bytes_per_pixel(color: ColorType) -> usize {
     }
 }
 
+/// Width and height from a PNG's IHDR chunk, without decoding anything.
+pub fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    Some((w, h))
+}
+
 /// Decodes `png` and returns a PNG thumbnail whose longest side is at most
 /// `max_side`.
 pub fn png_thumbnail(png: &[u8], max_side: u32) -> Result<Vec<u8>, ThumbnailError> {
@@ -291,7 +301,7 @@ pub mod tests {
 
     /// Hand-built Adam7-interlaced RGBA PNG of one solid color (the `png`
     /// encoder cannot write interlaced files). Uses stored deflate blocks.
-    fn interlaced_png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
+    pub fn interlaced_png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
         const PASSES: [(u32, u32, u32, u32); 7] =
             [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)];
         let mut raw = Vec::new();

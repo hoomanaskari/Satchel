@@ -9,7 +9,8 @@ use satchel_core::{ClipKind, Settings, privacy::CaptureContext};
 
 use crate::clipboard::{ClipboardSink, SelfWrites};
 use crate::events::EventSink;
-use crate::platform::{Clock, Desktop};
+use crate::apps::IconCache;
+use crate::platform::{AppCatalog, Clock, Desktop};
 use crate::shortcut::ShortcutRegistrar;
 use crate::storage::SharedStore;
 
@@ -58,6 +59,11 @@ pub struct Ctx {
     pub settings_window: Arc<dyn SettingsWindowControl>,
     pub shortcuts: Arc<dyn ShortcutRegistrar>,
     pub clock: Arc<dyn Clock>,
+    /// Installed and running apps for the excluded-apps picker (and the
+    /// source-app icons on the shelf's cards).
+    pub apps: Arc<dyn AppCatalog>,
+    /// Their icons; emptied when the settings window closes.
+    pub app_icons: IconCache,
     /// Pid of the app that was frontmost when the shelf opened.
     pub previous_app: Mutex<Option<i32>>,
     /// One paste sequence at a time.

@@ -47,7 +47,10 @@ const DAY_MS: i64 = 86_400_000;
 
 /// Ordered, append-only list of migrations. Never edit a released entry; add
 /// a new one. Entry `i` moves the schema from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[MIGRATION_1];
+const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
+
+/// RTF flavor of text clips (rich text from TextEdit, Notes, Pages...).
+const MIGRATION_2: &str = "ALTER TABLE clip_data ADD COLUMN rtf BLOB;";
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE clips (
@@ -220,6 +223,12 @@ impl Store {
             Some(id) => {
                 tx.prepare_cached("UPDATE clips SET last_used_at = ?2 WHERE id = ?1")?
                     .execute(params![id, now])?;
+                // The same text copied again with formatting: the latest
+                // formatting is what "Paste" (not plain) should give back.
+                if clip.html.is_some() || clip.rtf.is_some() {
+                    tx.prepare_cached("UPDATE clip_data SET html = ?2, rtf = ?3 WHERE clip_id = ?1")?
+                        .execute(params![id, clip.html, clip.rtf])?;
+                }
                 id
             }
             None => {
@@ -246,8 +255,8 @@ impl Store {
                 // Indexed for search by the `clip_data_after_insert` trigger.
                 tx.prepare_cached(
                     "INSERT INTO clip_data \
-                     (clip_id, thumbnail, file_paths, text, html, image, search_body) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (clip_id, thumbnail, file_paths, text, html, rtf, image, search_body) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )?
                 .execute(params![
                     id,
@@ -255,6 +264,7 @@ impl Store {
                     clip.file_paths,
                     clip.text,
                     clip.html,
+                    clip.rtf,
                     clip.image,
                     clip.search_body,
                 ])?;
@@ -318,7 +328,7 @@ impl Store {
         let row = self
             .conn
             .prepare_cached(
-                "SELECT c.kind, d.text, d.html, d.image, d.file_paths \
+                "SELECT c.kind, d.text, d.html, d.rtf, d.image, d.file_paths \
                  FROM clips c JOIN clip_data d ON d.clip_id = c.id WHERE c.id = ?1",
             )?
             .query_row([id], |r| {
@@ -327,8 +337,9 @@ impl Store {
                     kind: kind_from_row(r, 0)?,
                     text: r.get(1)?,
                     html: r.get(2)?,
-                    image_png: r.get(3)?,
-                    file_paths: decode_paths(r.get::<_, Option<Vec<u8>>>(4)?.as_deref()),
+                    rtf: r.get(3)?,
+                    image_png: r.get(4)?,
+                    file_paths: decode_paths(r.get::<_, Option<Vec<u8>>>(5)?.as_deref()),
                 })
             })
             .optional()?;
@@ -668,11 +679,13 @@ struct PreparedClip {
     kind: ClipKind,
     text: Option<String>,
     html: Option<String>,
+    rtf: Option<Vec<u8>>,
     image: Option<Vec<u8>>,
     thumbnail: Option<Vec<u8>>,
     /// Paths joined with NUL, which no OS allows inside a path.
     file_paths: Option<Vec<u8>>,
-    /// Search text when it is not `text`: file paths, one per line.
+    /// Search text when it is not `text`: file paths, one per line, or an
+    /// image's "image" plus its dimensions.
     search_body: Option<String>,
     source_app: Option<SourceApp>,
     preview: String,
@@ -693,6 +706,7 @@ impl PreparedClip {
             kind,
             text,
             mut html,
+            mut rtf,
             image_png,
             mut thumbnail_png,
             file_paths,
@@ -714,6 +728,16 @@ impl PreparedClip {
             .is_some_and(|h| h.len() as u64 > MAX_TEXT_BYTES)
         {
             html = None;
+        }
+        if rtf
+            .as_ref()
+            .is_some_and(|r| r.is_empty() || r.len() as u64 > MAX_TEXT_BYTES)
+        {
+            rtf = None;
+        }
+        if !matches!(kind, ClipKind::Text | ClipKind::Link | ClipKind::Code | ClipKind::Color) {
+            html = None;
+            rtf = None;
         }
         if thumbnail_png
             .as_ref()
@@ -750,7 +774,11 @@ impl PreparedClip {
         }
 
         let preview = match kind {
-            ClipKind::Image => String::new(),
+            ClipKind::Image => image_png
+                .as_deref()
+                .and_then(png_dimensions)
+                .map(|(w, h)| format!("{w} \u{d7} {h}"))
+                .unwrap_or_default(),
             ClipKind::File => file_preview(&file_paths),
             ClipKind::Color => {
                 let t = text.as_deref().unwrap_or_default();
@@ -763,13 +791,18 @@ impl PreparedClip {
         let byte_size = (text.as_ref().map_or(0, String::len)
             + image_png.as_ref().map_or(0, Vec::len)
             + file_paths.iter().map(String::len).sum::<usize>()) as u64;
-        let search_body = (kind == ClipKind::File).then(|| file_paths.join("\n"));
+        let search_body = match kind {
+            ClipKind::File => Some(file_paths.join("\n")),
+            ClipKind::Image => Some(format!("image {}", preview.replace('\u{d7}', "x"))),
+            _ => None,
+        };
         let file_paths = (!file_paths.is_empty()).then(|| file_paths.join("\0").into_bytes());
 
         Ok(Self {
             kind,
             text,
             html,
+            rtf,
             image: image_png,
             thumbnail: thumbnail_png,
             file_paths,
@@ -780,6 +813,17 @@ impl PreparedClip {
             hash,
         })
     }
+}
+
+/// Width and height from a PNG's IHDR chunk, without decoding it.
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if png.len() < 24 || &png[..8] != SIGNATURE || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    (w > 0 && h > 0).then_some((w, h))
 }
 
 /// SHA-256 over a tagged, length-prefixed encoding of the payload, so that
@@ -988,6 +1032,7 @@ mod tests {
             kind: ClipKind::Text,
             text: Some(t.into()),
             html: None,
+            rtf: None,
             image_png: None,
             thumbnail_png: None,
             file_paths: vec![],

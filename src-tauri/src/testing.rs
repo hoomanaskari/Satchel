@@ -17,7 +17,7 @@ use crate::clipboard::{
 use crate::ctx::{Ctx, Policy, SettingsWindowControl, ShelfControl};
 use crate::error::CmdResult;
 use crate::events::{ChangeReason, EventSink};
-use crate::platform::{Clock, Desktop, FrontApp};
+use crate::platform::{AppCatalog, AppInfo, Clock, Desktop, FrontApp};
 use crate::shortcut::ShortcutRegistrar;
 use crate::storage::{ClipStore, SharedStore};
 
@@ -152,6 +152,7 @@ impl ClipStore for FakeStore {
             kind: r.clip.kind,
             text: r.clip.text.clone(),
             html: r.clip.html.clone(),
+            rtf: r.clip.rtf.clone(),
             image_png: r.clip.image_png.clone(),
             file_paths: r.clip.file_paths.clone(),
         }))
@@ -273,6 +274,10 @@ impl EventSink for FakeEvents {
     fn settings_changed(&self, settings: &Settings) {
         self.0.push(format!("event settings-changed paused={}", settings.capture_paused));
     }
+    fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64) {
+        let kind = serde_json::to_value(kind).unwrap();
+        self.0.push(format!("event capture-skipped {} {limit_bytes}", kind.as_str().unwrap()));
+    }
 }
 
 // ---------------------------------------------------------------- desktop
@@ -306,6 +311,9 @@ impl Desktop for FakeDesktop {
     fn request_keystroke_permission(&self) {
         self.log.push("prompt accessibility");
     }
+    fn open_keystroke_permission_settings(&self) {
+        self.log.push("open accessibility settings");
+    }
     fn post_paste_keystroke(&self) -> std::result::Result<(), ()> {
         self.log.push("keystroke paste");
         Ok(())
@@ -322,6 +330,8 @@ pub struct FakeBoard {
     pub formats: Mutex<Vec<String>>,
     pub payload: Mutex<Option<Payload>>,
     pub fail_writes: AtomicBool,
+    /// The latest request Satchel wrote, to check every flavor it carried.
+    pub written: Mutex<Option<WriteRequest>>,
 }
 
 impl FakeBoard {
@@ -374,6 +384,7 @@ impl ClipboardSink for FakeSink {
             format!("files:{}", request.files.join(","))
         };
         self.log.push(format!("write {what}"));
+        *self.board.written.lock().unwrap() = Some(request.clone());
         *self.board.formats.lock().unwrap() = vec![SELF_MARKER_TYPE.to_string()];
         Ok(self.board.change.fetch_add(1, Ordering::SeqCst) + 1)
     }
@@ -465,6 +476,39 @@ impl Clock for FakeClock {
 
 // ---------------------------------------------------------------- harness
 
+/// Installed: TextEdit, Vault, Notes (twice); running: Notes.
+pub struct FakeApps {
+    pub log: Arc<Log>,
+}
+
+fn fake_app(id: &str, name: &str, running: bool) -> AppInfo {
+    AppInfo { id: id.into(), name: name.into(), running }
+}
+
+impl AppCatalog for FakeApps {
+    fn installed_apps(&self) -> Vec<AppInfo> {
+        vec![
+            fake_app("com.example.vault", "Vault", false),
+            fake_app("com.apple.TextEdit", "TextEdit", false),
+            fake_app("com.apple.Notes", "Notes", false),
+            fake_app("com.apple.notes", "Notes", false),
+        ]
+    }
+    fn running_apps(&self) -> Vec<AppInfo> {
+        vec![fake_app("com.apple.Notes", "Notes", true)]
+    }
+    fn find_app(&self, id: &str) -> Option<AppInfo> {
+        self.installed_apps().into_iter().find(|a| a.id.eq_ignore_ascii_case(id))
+    }
+    fn icon_png(&self, id: &str, px: u32) -> Option<Vec<u8>> {
+        self.log.push(format!("icon {id} {px}"));
+        self.find_app(id).map(|a| format!("png:{}", a.id).into_bytes())
+    }
+    fn choose_app(&self) -> Option<AppInfo> {
+        Some(fake_app("com.example.chosen", "Chosen", false))
+    }
+}
+
 pub struct Harness {
     pub ctx: Arc<Ctx>,
     pub log: Arc<Log>,
@@ -526,6 +570,8 @@ impl Harness {
             settings_window: Arc::new(FakeSettingsWindow(log.clone())),
             shortcuts: shortcuts.clone(),
             clock: clock.clone(),
+            apps: Arc::new(FakeApps { log: log.clone() }),
+            app_icons: Default::default(),
             previous_app: Mutex::new(None),
             paste_lock: Mutex::new(()),
             accessibility_prompted: AtomicBool::new(false),
@@ -543,6 +589,7 @@ impl Harness {
             kind,
             text: Some(text.into()),
             html: None,
+            rtf: None,
             image_png: None,
             thumbnail_png: None,
             file_paths: vec![],

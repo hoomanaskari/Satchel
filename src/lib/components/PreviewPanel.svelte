@@ -1,7 +1,9 @@
 <script lang="ts">
   // Larger preview of the focused clip (Space). Text only; selectable.
+  import AppIcon from "./AppIcon.svelte";
   import Icon from "./Icon.svelte";
-  import { appInitial, appTileColor, cardPreview, formatBytes, kindLabel, previewText, relativeTime } from "$lib/format";
+  import type { AppIconCache } from "$lib/app-icons";
+  import { appTileColor, cardPreview, formatBytes, kindLabel, previewText, relativeTime } from "$lib/format";
   import type { PreviewState } from "$lib/shelf.svelte";
   import type { ThumbnailCache } from "$lib/thumbs";
   import type { ClipSummary } from "$lib/types";
@@ -10,10 +12,17 @@
     clip,
     preview,
     thumbs,
+    icons,
     now,
     onclose,
-  }: { clip: ClipSummary; preview: PreviewState | null; thumbs: ThumbnailCache; now: number; onclose: () => void } =
-    $props();
+  }: {
+    clip: ClipSummary;
+    preview: PreviewState | null;
+    thumbs: ThumbnailCache;
+    icons: AppIconCache | null;
+    now: number;
+    onclose: () => void;
+  } = $props();
 
   const card = $derived(cardPreview(clip));
   const body = $derived(previewText(preview?.text ?? clip.preview));
@@ -62,7 +71,7 @@
 
   <aside class="info">
     <div class="app">
-      <span class="tile" aria-hidden="true" style:background-color={appTileColor(clip.sourceApp)}>{appInitial(clip.sourceApp)}</span>
+      <AppIcon {icons} id={clip.sourceApp?.id ?? null} label={clip.sourceApp?.name ?? "?"} tint={appTileColor(clip.sourceApp)} size={22} />
       <span>{clip.sourceApp?.name ?? "Unknown App"}</span>
     </div>
     {#if clip.title}<p class="title">{clip.title}</p>{/if}
@@ -73,6 +82,10 @@
       <dd>{relativeTime(clip.createdAt, now)}</dd>
       <dt>Last used</dt>
       <dd>{relativeTime(clip.lastUsedAt, now)}</dd>
+      {#if clip.kind === "image" && clip.preview.trim()}
+        <dt>Dimensions</dt>
+        <dd>{clip.preview}</dd>
+      {/if}
       <dt>Size</dt>
       <dd>{formatBytes(clip.byteSize)}</dd>
       {#if preview?.text && clip.kind !== "image"}
@@ -181,17 +194,6 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
-  }
-  .tile {
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
   .title {
     margin: 0;

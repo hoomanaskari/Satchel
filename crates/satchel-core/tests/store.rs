@@ -10,6 +10,7 @@ fn text_clip(text: &str) -> NewClip {
         kind: satchel_core::classify::classify_text(text),
         text: Some(text.to_string()),
         html: None,
+        rtf: None,
         image_png: None,
         thumbnail_png: None,
         file_paths: vec![],
@@ -25,6 +26,7 @@ fn image_clip(bytes: Vec<u8>, thumb: Option<Vec<u8>>) -> NewClip {
         kind: ClipKind::Image,
         text: None,
         html: None,
+        rtf: None,
         image_png: Some(bytes),
         thumbnail_png: thumb,
         file_paths: vec![],
@@ -37,6 +39,7 @@ fn file_clip(paths: &[&str]) -> NewClip {
         kind: ClipKind::File,
         text: None,
         html: None,
+        rtf: None,
         image_png: None,
         thumbnail_png: None,
         file_paths: paths.iter().map(|p| p.to_string()).collect(),
@@ -793,4 +796,64 @@ fn settings_default_until_saved_then_round_trip() {
     };
     s.save_settings(&empty_list).unwrap();
     assert_eq!(s.settings().unwrap(), empty_list);
+}
+
+// ------------------------------------------------- images and rich text
+
+/// Signature + IHDR of a `w` x `h` PNG: all the store reads of an image.
+fn png_header(w: u32, h: u32) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+    png.extend_from_slice(&w.to_be_bytes());
+    png.extend_from_slice(&h.to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    png
+}
+
+#[test]
+fn images_show_their_dimensions_and_are_found_by_search() {
+    let mut s = store();
+    let img = insert(&mut s, image_clip(png_header(1920, 1080), Some(vec![1])), 1);
+    assert_eq!(img.preview, "1920 \u{d7} 1080");
+    insert(&mut s, text_clip("an unrelated note"), 2);
+    let q = |t: &str| Query { text: Some(t.into()), ..Query::default() };
+    assert_eq!(ids(&s, &q("image")), vec![img.id]);
+    assert_eq!(ids(&s, &q("1920")), vec![img.id]);
+    assert_eq!(
+        ids(&s, &Query { kind: Some(ClipKind::Image), ..q("image") }),
+        vec![img.id]
+    );
+}
+
+#[test]
+fn rich_text_keeps_rtf_and_html_and_the_latest_formatting_wins() {
+    let mut s = store();
+    let plain = insert(&mut s, text_clip("hello"), 1);
+    assert_eq!(s.content(plain.id).unwrap().unwrap().rtf, None);
+    // The same text copied again, bold this time: same clip, new formatting.
+    let mut bold = text_clip("hello");
+    bold.html = Some("<b>hello</b>".into());
+    bold.rtf = Some(b"{\\rtf1 \\b hello}".to_vec());
+    let again = s.insert(bold, 2).unwrap();
+    assert!(matches!(again, InsertOutcome::Bumped(ref c) if c.id == plain.id));
+    let c = s.content(plain.id).unwrap().unwrap();
+    assert_eq!(c.html.as_deref(), Some("<b>hello</b>"));
+    assert_eq!(c.rtf.as_deref(), Some(&b"{\\rtf1 \\b hello}"[..]));
+    // Copied once more without formatting: the formatting is kept.
+    insert(&mut s, text_clip("hello"), 3);
+    assert!(s.content(plain.id).unwrap().unwrap().rtf.is_some());
+}
+
+#[test]
+fn rich_flavors_are_dropped_when_oversized_or_not_text() {
+    let mut s = store();
+    let mut big = text_clip("plain");
+    big.rtf = Some(vec![b'r'; MAX_TEXT_BYTES as usize + 1]);
+    let c = insert(&mut s, big, 1);
+    assert_eq!(s.content(c.id).unwrap().unwrap().rtf, None);
+    let mut img = image_clip(png_header(2, 2), None);
+    img.rtf = Some(b"{\\rtf1 x}".to_vec());
+    img.html = Some("<img>".into());
+    let i = insert(&mut s, img, 2);
+    let c = s.content(i.id).unwrap().unwrap();
+    assert_eq!((c.rtf, c.html), (None, None));
 }

@@ -8,9 +8,15 @@ pub type PinboardId = i64;
 /// Milliseconds since the Unix epoch.
 pub type Millis = i64;
 
-/// Hard caps applied before anything is stored.
+/// Hard caps applied before anything is stored. `MAX_TEXT_BYTES` also caps
+/// the HTML and RTF flavors of a text clip (an oversized flavor is dropped,
+/// the text kept).
 pub const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
-pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+/// Largest image kept, measured as the stored PNG. Big enough for a full
+/// 6K Retina screenshot or a 12 MP photo converted from JPEG/HEIC; larger
+/// images are skipped and the shelf says so (they are never truncated or
+/// downscaled).
+pub const MAX_IMAGE_BYTES: u64 = 64_000_000;
 /// Maximum characters kept in `ClipSummary::preview`.
 pub const PREVIEW_CHARS: usize = 300;
 
@@ -40,6 +46,9 @@ pub struct NewClip {
     pub kind: ClipKind,
     pub text: Option<String>,
     pub html: Option<String>,
+    /// RTF flavor of a text clip (TextEdit, Notes, Pages... write RTF rather
+    /// than HTML). Pasted with the text unless pasting as plain text.
+    pub rtf: Option<Vec<u8>>,
     /// PNG-encoded image data.
     pub image_png: Option<Vec<u8>>,
     /// PNG thumbnail, longest side at most 320 px, made by the caller.
@@ -56,8 +65,9 @@ pub struct ClipSummary {
     pub kind: ClipKind,
     /// User-given title, if any.
     pub title: Option<String>,
-    /// At most `PREVIEW_CHARS` characters of the text (file names for files,
-    /// normalized hex for colors, empty for images).
+    /// At most `PREVIEW_CHARS` characters of the text (file paths for files,
+    /// normalized hex for colors, pixel dimensions such as `1200 × 800` for
+    /// images).
     pub preview: String,
     pub source_app: Option<SourceApp>,
     pub created_at: Millis,
@@ -74,6 +84,7 @@ pub struct ClipContent {
     pub kind: ClipKind,
     pub text: Option<String>,
     pub html: Option<String>,
+    pub rtf: Option<Vec<u8>>,
     pub image_png: Option<Vec<u8>>,
     pub file_paths: Vec<String>,
 }

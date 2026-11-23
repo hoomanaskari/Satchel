@@ -5,6 +5,8 @@
   // app-wide, which is how the shelf picks the change up.
   import { onMount } from "svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
+  import { AppIconCache } from "$lib/app-icons";
+  import type { AppDirectory } from "$lib/excluded-apps";
   import { api } from "$lib/ipc";
   import { closesSettingsWindow } from "$lib/keyboard";
   import { isMac } from "$lib/platform";
@@ -12,6 +14,18 @@
 
   let settings = $state.raw<Settings | null>(null);
   let error = $state("");
+
+  // Icon URLs live as long as this window (it is destroyed on close).
+  const apps: AppDirectory = {
+    listApps: () => api.listApps(),
+    resolveApps: (ids) => api.resolveApps(ids),
+    chooseApp: () => api.chooseApp(),
+    icons: new AppIconCache({
+      fetch: (id) => api.getAppIcon(id),
+      createUrl: (blob) => URL.createObjectURL(blob),
+      revoke: (url) => URL.revokeObjectURL(url),
+    }),
+  };
 
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -48,6 +62,7 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <SettingsPanel
     {settings}
+    {apps}
     onsave={(s) => api.saveSettings(s)}
     onpause={async (p) => {
       await api.setCapturePaused(p);
