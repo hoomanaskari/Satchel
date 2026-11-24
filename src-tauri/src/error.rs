@@ -13,9 +13,18 @@ pub const STORAGE: &str = "storage error";
 pub const INTERNAL: &str = "internal error";
 pub const CLIPBOARD: &str = "could not write the clipboard";
 /// Prefix the UI can match to show the Accessibility explanation.
-pub const ACCESSIBILITY: &str = "accessibility-permission-required: Satchel copied the clip but \
-     needs Accessibility access to paste it. Press the paste shortcut yourself, or allow Satchel \
-     in System Settings > Privacy & Security > Accessibility.";
+pub const ACCESSIBILITY_PREFIX: &str = "accessibility-permission-required";
+
+/// The Accessibility error, naming this app as System Settings lists it
+/// ("Satchel" or "Satchel Dev").
+pub fn accessibility() -> String {
+    let name = crate::app_identity::name();
+    format!(
+        "{ACCESSIBILITY_PREFIX}: {name} copied the clip but needs Accessibility access to paste it. \
+         Press the paste shortcut yourself, or allow {name} in System Settings > Privacy & Security > \
+         Accessibility."
+    )
+}
 
 pub type CmdResult<T> = Result<T, String>;
 

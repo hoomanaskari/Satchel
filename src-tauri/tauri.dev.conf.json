@@ -1,0 +1,18 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Satchel Dev",
+  "identifier": "app.satchel.desktop.dev",
+  "build": {
+    "beforeDevCommand": "pnpm dev --mode dev-app",
+    "beforeBuildCommand": "pnpm build --mode dev-app"
+  },
+  "bundle": {
+    "icon": [
+      "icons/dev/32x32.png",
+      "icons/dev/128x128.png",
+      "icons/dev/128x128@2x.png",
+      "icons/dev/icon.icns",
+      "icons/dev/Satchel.icon"
+    ]
+  }
+}

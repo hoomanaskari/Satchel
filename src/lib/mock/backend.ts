@@ -5,6 +5,7 @@
 // It follows the contract's semantics closely (ordering, keyset cursor,
 // limit clamping, events) so the UI behaves the same as against the store.
 
+import { APP_NAME } from "../app-name";
 import type { Transport } from "../ipc";
 import type {
   AppInfo,
@@ -23,8 +24,8 @@ import type {
 const PREVIEW_CHARS = 300;
 /** Same text as `error::ACCESSIBILITY` in Rust. */
 const ACCESSIBILITY_ERROR =
-  "accessibility-permission-required: Satchel copied the clip but needs Accessibility access to paste it. " +
-  "Press the paste shortcut yourself, or allow Satchel in System Settings > Privacy & Security > Accessibility.";
+  `accessibility-permission-required: ${APP_NAME} copied the clip but needs Accessibility access to paste it. ` +
+  `Press the paste shortcut yourself, or allow ${APP_NAME} in System Settings > Privacy & Security > Accessibility.`;
 
 interface Row extends ClipSummary {
   text: string | null;

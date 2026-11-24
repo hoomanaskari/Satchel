@@ -126,7 +126,7 @@ fn open_on_main<R: Runtime>(
     *slot.lock().unwrap_or_else(|p| p.into_inner()) = return_to;
 
     let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(ROUTE.into()))
-        .title("Satchel Settings")
+        .title(format!("{} Settings", crate::app_identity::name()))
         .inner_size(WIDTH, HEIGHT)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
         .max_inner_size(MAX_WIDTH, MAX_HEIGHT)

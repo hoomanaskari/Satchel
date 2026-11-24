@@ -3,9 +3,9 @@
 //! Driven natively on the `NSStatusBarButton` that Tauri's tray creates:
 //! each frame is a template `NSImage` with an 18 px and a 36 px bitmap
 //! (crisp on 1x and 2x displays, tinted by AppKit for light and dark menu
-//! bars and the highlighted state), set straight on the button from an
-//! `NSTimer` in the common run loop modes (so it keeps running while the
-//! menu is open). The timer exists only while an animation runs. Frames are
+//! bars and the highlighted state; Satchel Dev's are blue, not templates),
+//! set straight on the button from an `NSTimer` in the common run loop
+//! modes (so it keeps running while the menu is open). The timer exists only while an animation runs. Frames are
 //! drawn on demand by `tray_anim` from the elapsed time, so a late tick
 //! never slows the animation down; nothing is cached between animations.
 //! Every image is 18 pt square like the resting icon, so the status item's
@@ -49,16 +49,30 @@ fn now() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
-/// A template image of `pose`, 18 pt square, with 1x and 2x bitmaps.
+/// Satchel Dev's glyph color: the blue of the DEV band on its app icon
+/// (`scripts/dev-icon.swift`), so its menu bar icon is never mistaken for
+/// the installed Satchel's. (A tint on a template image is not honored by
+/// the menu bar: it draws black.)
+const DEV_RGB: [u8; 3] = [10, 132, 255];
+
+/// A template image of `pose`, 18 pt square, with 1x and 2x bitmaps; for
+/// Satchel Dev a blue one instead (not a template).
 fn image(pose: &Pose) -> Option<Retained<NSImage>> {
+    let dev = crate::app_identity::is_dev();
     let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(POINTS, POINTS));
     for px in PIXELS {
-        let png = crate::thumbnail::encode_rgba(&crate::tray_anim::render(px, pose), px, px).ok()?;
+        let mut rgba = crate::tray_anim::render(px, pose);
+        if dev {
+            for pixel in rgba.as_chunks_mut::<4>().0 {
+                pixel[..3].copy_from_slice(&DEV_RGB);
+            }
+        }
+        let png = crate::thumbnail::encode_rgba(&rgba, px, px).ok()?;
         let rep = NSBitmapImageRep::imageRepWithData(&NSData::from_vec(png))?;
         rep.setSize(NSSize::new(POINTS, POINTS));
         image.addRepresentation(&rep);
     }
-    image.setTemplate(true);
+    image.setTemplate(!dev);
     Some(image)
 }
 

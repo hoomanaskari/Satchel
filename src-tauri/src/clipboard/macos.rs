@@ -38,7 +38,6 @@ use super::{
 };
 use crate::thumbnail::MAX_PIXELS;
 
-pub const BUNDLE_ID: &str = "app.satchel.desktop";
 /// TIFF and BMP are uncompressed; accept a larger raw size before converting
 /// to PNG (the PNG is checked against the cap again).
 const UNCOMPRESSED_FACTOR: u64 = 4;
@@ -322,7 +321,10 @@ pub struct MacClipboardSink;
 
 fn mark(item: &NSPasteboardItem) {
     item.setString_forType(&NSString::from_str("1"), &NSString::from_str(SELF_MARKER_TYPE));
-    item.setString_forType(&NSString::from_str(BUNDLE_ID), &NSString::from_str(SOURCE_MARKER_TYPE));
+    item.setString_forType(
+        &NSString::from_str(crate::app_identity::id()),
+        &NSString::from_str(SOURCE_MARKER_TYPE),
+    );
 }
 
 fn write_items(pb: &NSPasteboard, items: Vec<Retained<NSPasteboardItem>>) -> bool {

@@ -1,5 +1,5 @@
 //! Menu bar / tray icon: Show Satchel, Settings, Pause Capturing, Clear
-//! History, Quit.
+//! History, Quit. Satchel Dev says its own name and tints the icon blue.
 
 use std::sync::Arc;
 
@@ -32,11 +32,12 @@ pub fn icon_rgba(size: u32) -> Vec<u8> {
 }
 
 pub fn create<R: Runtime>(app: &AppHandle<R>, paused: bool) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, ID_SHOW, "Show Satchel", true, None::<&str>)?;
+    let name = crate::app_identity::name();
+    let show = MenuItem::with_id(app, ID_SHOW, format!("Show {name}"), true, None::<&str>)?;
     let settings = MenuItem::with_id(app, ID_SETTINGS, "Settings…", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, ID_PAUSE, "Pause Capturing", true, paused, None::<&str>)?;
     let clear = MenuItem::with_id(app, ID_CLEAR, "Clear History…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, ID_QUIT, "Quit Satchel", true, Some("CmdOrCtrl+Q"))?;
+    let quit = MenuItem::with_id(app, ID_QUIT, format!("Quit {name}"), true, Some("CmdOrCtrl+Q"))?;
     let menu = Menu::with_items(
         app,
         &[&show, &settings, &PredefinedMenuItem::separator(app)?, &pause, &PredefinedMenuItem::separator(app)?, &clear, &PredefinedMenuItem::separator(app)?, &quit],
@@ -46,7 +47,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, paused: bool) -> tauri::Result<()>
     let tray = TrayIconBuilder::with_id("satchel")
         .icon(Image::new_owned(icon_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE))
         .icon_as_template(true)
-        .tooltip("Satchel")
+        .tooltip(name)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_menu(app, event.id().as_ref()))

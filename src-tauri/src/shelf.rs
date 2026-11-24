@@ -283,7 +283,7 @@ impl<R: Runtime> Shelf<R> {
 
         let background = Background::detect();
         let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::default())
-            .title("Satchel")
+            .title(crate::app_identity::name())
             .inner_size(960.0, HEIGHT)
             .decorations(false)
             .transparent(true)

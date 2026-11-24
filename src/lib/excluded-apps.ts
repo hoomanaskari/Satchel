@@ -3,6 +3,7 @@
 // macOS, executables elsewhere); this turns it into rows people recognize.
 
 import type { AppIconCache } from "./app-icons";
+import { APP_NAME } from "./app-name";
 import type { AppInfo } from "./types";
 
 /** What the settings window needs from the backend to show and pick apps. */
@@ -109,7 +110,7 @@ export function identifierError(raw: string, list: readonly string[]): string | 
     return "That is not a valid app identifier.";
   }
   if (isExcluded(list, id)) {
-    return isBuiltInDefault(id) ? "Satchel already excludes that app by default." : "That app is already excluded.";
+    return isBuiltInDefault(id) ? `${APP_NAME} already excludes that app by default.` : "That app is already excluded.";
   }
   return null;
 }

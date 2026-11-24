@@ -1,6 +1,7 @@
 //! Satchel's Tauri application layer: clipboard watcher, paste, global
 //! shortcut, tray, the shelf and settings windows and the IPC commands.
 
+mod app_identity;
 mod apps;
 mod capture;
 mod clipboard;
@@ -97,9 +98,18 @@ fn open_store<R: Runtime>(app: &AppHandle<R>) -> Box<dyn ClipStore> {
     let opened = data_dir(app)
         .ok_or(())
         .and_then(|dir| ensure_private_dir(&dir).map(|_| dir).map_err(|_| ()))
-        .and_then(|dir| Store::open(&dir.join(DB_FILE)).map_err(|_| ()));
+        .and_then(|dir| {
+            let path = dir.join(DB_FILE);
+            let new = !path.exists();
+            Store::open(&path).map(|store| (store, new)).map_err(|_| ())
+        });
     match opened {
-        Ok(store) => Box::new(store),
+        Ok((mut store, new)) => {
+            if new {
+                start_with_variant_defaults(&mut store);
+            }
+            Box::new(store)
+        }
         Err(()) => {
             // Never fall back to a world-readable location: keep the history
             // in memory for this run instead.
@@ -109,7 +119,20 @@ fn open_store<R: Runtime>(app: &AppHandle<R>) -> Box<dyn ClipStore> {
     }
 }
 
+/// A new history starts with this Satchel's own defaults: Satchel Dev's
+/// shelf shortcut differs from the installed Satchel's (see `app_identity`).
+fn start_with_variant_defaults(store: &mut Store) {
+    let shortcut = app_identity::default_shortcut();
+    if let Ok(mut settings) = store.settings()
+        && settings.shelf_shortcut != shortcut
+    {
+        settings.shelf_shortcut = shortcut;
+        let _ = store.save_settings(&settings);
+    }
+}
+
 fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
+    app_identity::init(&app.config().identifier, &app.package_info().name);
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory)?;
 
@@ -149,7 +172,7 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
     tray::create(app, settings.capture_paused)?;
 
     if shortcuts.register(&settings.shelf_shortcut).is_err() {
-        let fallback = Settings::default().shelf_shortcut;
+        let fallback = app_identity::default_shortcut();
         eprintln!("satchel: the shelf shortcut is unavailable; trying the default");
         let _ = shortcuts.register(&fallback);
     }
@@ -215,7 +238,7 @@ pub fn run() {
         ])
         .setup(|app| setup(app.handle()))
         .build(tauri::generate_context!())
-        .expect("error while building Satchel")
+        .expect("error while building the app")
         .run(|_app, event| {
             // An accessory app with no visible window must keep running.
             if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {

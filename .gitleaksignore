@@ -1,0 +1,4 @@
+# gitleaks false positives (fingerprints). Each one is reviewed, not a real secret.
+# Mock data: a fake password-reset link on example.com, used to show that such links are not fetched.
+df517de117b8422836fb9cff3daf34587399cdb8:src/lib/mock/backend.ts:generic-api-key:67
+src/lib/mock/backend.ts:generic-api-key:67

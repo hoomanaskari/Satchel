@@ -9,3 +9,6 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /target/
+
+# Extra Cargo target directories used for side builds (e.g. target-linkpreview/)
+/target-*/

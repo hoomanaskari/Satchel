@@ -105,7 +105,7 @@ pub fn dismiss_shelf(ctx: &Ctx) {
 
 /// Pastes the clips, in order, into the app that was in front when the shelf
 /// opened. Without the keystroke permission it copies instead, leaves the
-/// shelf up and returns the `ACCESSIBILITY` error so the UI can explain and
+/// shelf up and returns the `accessibility()` error so the UI can explain and
 /// offer the way to grant it. (Hiding first would make the failure silent:
 /// macOS shows its own prompt only once, and never when Satchel is already
 /// listed under Accessibility with a grant that no longer matches the build.)
@@ -131,7 +131,7 @@ pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<()> {
         if ctx.take_accessibility_prompt() {
             ctx.desktop.request_keystroke_permission();
         }
-        return Err(error::ACCESSIBILITY.to_string());
+        return Err(error::accessibility());
     }
 
     ctx.shelf.hide();

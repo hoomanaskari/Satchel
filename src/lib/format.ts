@@ -1,6 +1,7 @@
 // Pure formatting helpers for cards, labels and the preview. Everything
 // returned here is plain text: the UI only ever puts it into text nodes.
 
+import { APP_NAME } from "./app-name";
 import type { CaptureSkipped, ClipKind, ClipSummary, SourceApp } from "./types";
 
 const MIN = 60_000;
@@ -46,7 +47,7 @@ export function formatBytes(n: number): string {
 /** The notice for a copy Satchel did not keep because it is over a size cap. */
 export function skippedNotice(p: CaptureSkipped): string {
   const what = p.kind === "image" ? "An image you copied" : p.kind === "file" ? "Files you copied" : "Text you copied";
-  return `${what} was not kept: it is over Satchel's ${formatBytes(p.limitBytes)} limit.`;
+  return `${what} was not kept: it is over ${APP_NAME}'s ${formatBytes(p.limitBytes)} limit.`;
 }
 
 const HEX = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;

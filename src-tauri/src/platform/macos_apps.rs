@@ -156,7 +156,8 @@ fn choose_on_main(mtm: MainThreadMarker) -> Option<AppInfo> {
     panel.setAllowedFileTypes(Some(&NSArray::from_retained_slice(&[NSString::from_str("app")])));
     panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str("/Applications"))));
     panel.setPrompt(Some(&NSString::from_str("Exclude")));
-    panel.setMessage(Some(&NSString::from_str("Choose an app whose copies Satchel should never save.")));
+    let message = format!("Choose an app whose copies {} should never save.", crate::app_identity::name());
+    panel.setMessage(Some(&NSString::from_str(&message)));
     if panel.runModal() != NSModalResponseOK {
         return None;
     }

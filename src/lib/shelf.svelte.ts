@@ -3,6 +3,7 @@
 // Only `$state` fields, getters and methods: no effects, no timers other
 // than the search debounce, which exists only while a search is pending.
 
+import { APP_NAME } from "./app-name";
 import { debounce } from "./debounce";
 import { resultLabel, skippedNotice } from "./format";
 import type { Api } from "./ipc";
@@ -39,7 +40,7 @@ function message(e: unknown): string {
 export const ACCESSIBILITY_ERROR_PREFIX = "accessibility-permission-required";
 /** Shown in the top bar's notice, beside the button that opens the right System Settings page. */
 export const ACCESSIBILITY_NOTICE =
-  "Copied, not pasted: Satchel needs Accessibility access. If it is already on, remove it and add it again.";
+  `Copied, not pasted: ${APP_NAME} needs Accessibility access. If it is already on, remove it and add it again.`;
 
 /**
  * What the top bar's notice says, when something needs the user's attention.

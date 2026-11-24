@@ -24,6 +24,9 @@ pub use unsupported::{
 
 /// Pasteboard type Satchel adds to everything it writes, so the watcher can
 /// recognize its own writes even if the change count bookkeeping misses one.
+/// Satchel and Satchel Dev share it on purpose: a clip pasted from one is
+/// not captured again by the other, so their histories stay apart. (The
+/// `SOURCE_MARKER_TYPE` value is each app's own bundle identifier.)
 pub const SELF_MARKER_TYPE: &str = "app.satchel.desktop.self";
 /// nspasteboard.org convention: identifies the app that wrote the clipboard.
 pub const SOURCE_MARKER_TYPE: &str = "org.nspasteboard.source";
