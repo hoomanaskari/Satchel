@@ -143,6 +143,8 @@ export interface Commands {
   get_app_icon: { args: { id: string }; ret: ArrayBuffer | Uint8Array | number[] };
   /** Native "choose an application" panel; null when cancelled. */
   choose_app: { args: undefined; ret: AppInfo | null };
+  /** The third-party licence notices bundled with the app, as plain text. */
+  get_third_party_notices: { args: undefined; ret: string };
 }
 
 export type CommandName = keyof Commands;

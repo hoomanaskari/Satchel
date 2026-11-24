@@ -14,6 +14,7 @@
     "app": "sh scripts/app.sh",
     "set-version": "node scripts/set-version.ts",
     "release": "sh scripts/release.sh",
+    "notices": "node scripts/notices.ts",
     "test": "vitest run"
   },
   "license": "MIT",

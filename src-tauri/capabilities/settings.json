@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "The settings window may read and save settings, pause capturing, clear history, close itself, list apps (names and icons, plus the native app chooser) for the excluded-apps picker and listen to Satchel's events. Nothing else: no clip content, no paste, no plugin permissions.",
+  "description": "The settings window may read and save settings, pause capturing, clear history, close itself, list apps (names and icons, plus the native app chooser) for the excluded-apps picker, read the bundled third-party licence notices and listen to Satchel's events. Nothing else: no clip content, no paste, no plugin permissions.",
   "local": true,
   "windows": [
     "settings"
@@ -17,6 +17,7 @@
     "allow-list-apps",
     "allow-resolve-apps",
     "allow-get-app-icon",
-    "allow-choose-app"
+    "allow-choose-app",
+    "allow-get-third-party-notices"
   ]
 }

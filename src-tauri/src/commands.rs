@@ -395,6 +395,18 @@ pub async fn choose_app(ctx: Ctxs<'_>) -> CmdResult<Option<AppInfo>> {
     blocking(&ctx, |c| Ok(api::choose_app(c))).await
 }
 
+/// The bundled third-party licence notices, as plain text (settings window only).
+#[tauri::command(async)]
+pub fn get_third_party_notices(app: tauri::AppHandle) -> CmdResult<String> {
+    use tauri::Manager;
+    use tauri::path::BaseDirectory;
+    let path = app
+        .path()
+        .resolve(crate::notices::FILE, BaseDirectory::Resource)
+        .map_err(|_| crate::error::NOT_FOUND.to_string())?;
+    crate::notices::read(&path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::api;

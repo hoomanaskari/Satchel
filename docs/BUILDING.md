@@ -29,8 +29,8 @@ without touching the clips you use.
 - Rust (stable), Node 24 and pnpm (`pnpm install` once).
 - For signed builds: a **Developer ID Application** certificate in your login Keychain. Check with
   `security find-identity -v -p codesigning`. Without one, `pnpm app` signs ad-hoc (see below).
-- For releases only: `brew install create-dmg`, and the notary login (see "Once, before the first
-  release").
+- For releases only: `brew install create-dmg`, the notary login (see "Once, before the first
+  release") and cargo-about (see "Third-party notices").
 
 ## Satchel Dev
 
@@ -105,6 +105,47 @@ with one command:
 pnpm set-version 0.2.0
 ```
 
+## Third-party notices
+
+Satchel.app carries `THIRD-PARTY-NOTICES.txt`, the licences and copyright notices of the
+third-party code inside it. It is checked in at the root of the repository, bundled into
+`Contents/Resources/` of both Satchel and Satchel Dev (`bundle.resources` in `tauri.conf.json`),
+and shown in Settings under "Acknowledgements…". Regenerate it whenever `Cargo.lock` or
+`pnpm-lock.yaml` changes, and commit the result:
+
+```bash
+pnpm notices
+```
+
+It needs cargo-about, at the version named in `scripts/notices/config.json`:
+
+```bash
+cargo install cargo-about --locked --features cli --version 0.9.3
+```
+
+What it covers:
+
+- **Rust crates** compiled into the app binary for the Mac targets in `scripts/notices/about.toml`:
+  `cargo tree -e normal,no-proc-macro`, so build scripts, proc-macros, the crates only they use and
+  dev dependencies are left out. cargo-about finds each crate's licence files and copyright notices
+  in its sources (offline, from Cargo's download cache). A crate that ships no licence file gets the
+  standard text with the authors it lists.
+- **npm packages** whose code is in the built web assets, as the bundler reports them
+  (`scripts/lib/bundle-report.js`, a Vite plugin that does nothing unless `pnpm notices` asks), for
+  both the Satchel and Satchel Dev builds. Build tools that leave no code in the bundle are not
+  listed. Bundler-generated helpers and code copied into another package are named in
+  `scripts/notices/config.json`; the script stops when the bundle has one it doesn't know.
+
+`accepted` in `scripts/notices/about.toml` is the licence allow-list for both: a package whose
+licence it cannot satisfy stops generation. MPL-2.0 packages are listed with a link to their source.
+
+```bash
+pnpm notices --check
+```
+
+fails when the file is not what `pnpm notices` would write now. `pnpm release` runs it before
+building and checks that the built app contains the same file.
+
 ## Releases
 
 ### Once, before the first release
@@ -137,11 +178,12 @@ pnpm set-version 0.2.0
    yet, the config is the installed Satchel's (not Satchel Dev's), a Developer ID certificate and
    the notary login are present. Then it:
 
-   - runs `pnpm check`, `pnpm test`, `cargo test` and `cargo clippy`,
+   - runs `pnpm notices --check`, `pnpm check`, `pnpm test`, `cargo test` and `cargo clippy`,
    - builds `Satchel.app` from `tauri.conf.json` in its own Cargo folder, `target/production`, so
      it never replaces a Satchel Dev build or a Satchel that is running from `target/release`,
-   - checks the built app: identifier `app.satchel.desktop`, name Satchel, the version, a
-     Developer ID signature with the hardened runtime and a secure timestamp,
+   - checks the built app: identifier `app.satchel.desktop`, name Satchel, the version,
+     `THIRD-PARTY-NOTICES.txt` inside it, a Developer ID signature with the hardened runtime and a
+     secure timestamp,
    - sends it to Apple to notarize, staples the ticket and asks Gatekeeper to assess it,
    - makes the DMG, signs it, notarizes and staples it,
    - writes `SHA256SUMS.txt`.

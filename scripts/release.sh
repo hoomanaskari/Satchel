@@ -48,6 +48,7 @@ node --input-type=module -e '
   assertProduction(JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")));
 ' || stop "src-tauri/tauri.conf.json is not the installed Satchel's."
 command -v create-dmg >/dev/null || stop "create-dmg is missing. Install it with: brew install create-dmg"
+cargo about --version >/dev/null 2>&1 || stop "cargo-about is missing. See \"Third-party notices\" in docs/BUILDING.md."
 . scripts/signing-identity.sh
 [ -n "$APPLE_SIGNING_IDENTITY" ] || stop "no Developer ID Application certificate on this Mac."
 export APPLE_SIGNING_IDENTITY
@@ -65,6 +66,8 @@ fi
 
 echo "Checking Satchel $VERSION"
 pnpm install --frozen-lockfile
+# THIRD-PARTY-NOTICES.txt ships inside Satchel.app: it must match Cargo.lock and the web bundle.
+pnpm notices --check
 pnpm check
 pnpm test
 cargo test --workspace --locked
@@ -81,6 +84,8 @@ plist="$APP/Contents/Info.plist"
   || stop "the build is not the installed Satchel (its identifier is not app.satchel.desktop)."
 [ "$(plutil -extract CFBundleName raw -o - "$plist")" = Satchel ] || stop "the build is not called Satchel."
 [ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$VERSION" ] || stop "the build is not version $VERSION."
+cmp -s "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt" THIRD-PARTY-NOTICES.txt \
+  || stop "Satchel.app does not contain the current THIRD-PARTY-NOTICES.txt."
 codesign --verify --deep --strict "$APP"
 signature=$(codesign -dvv "$APP" 2>&1)
 echo "$signature" | grep -q "^Authority=Developer ID Application:" || stop "Satchel.app is not signed with a Developer ID."

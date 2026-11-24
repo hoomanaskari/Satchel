@@ -28,6 +28,7 @@ const COMMANDS: &[&str] = &[
     "resolve_apps",
     "get_app_icon",
     "choose_app",
+    "get_third_party_notices",
 ];
 
 fn main() {

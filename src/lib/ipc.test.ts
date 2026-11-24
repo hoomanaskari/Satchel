@@ -56,6 +56,7 @@ describe("commands", () => {
     ["resolveApps", () => ipc.resolveApps(["com.apple.Notes"]), "resolve_apps", { ids: ["com.apple.Notes"] }],
     ["getAppIcon", () => ipc.getAppIcon("com.apple.Notes"), "get_app_icon", { id: "com.apple.Notes" }],
     ["chooseApp", () => ipc.chooseApp(), "choose_app", undefined],
+    ["getThirdPartyNotices", () => ipc.getThirdPartyNotices(), "get_third_party_notices", undefined],
   ];
 
   it.each(cases)("%s invokes the contract command with camelCase args", async (_n, call, cmd, args) => {

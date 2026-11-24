@@ -14,6 +14,7 @@
   import type { AppInfo, Settings } from "$lib/types";
   import AppIcon from "./AppIcon.svelte";
   import AppPicker from "./AppPicker.svelte";
+  import Notices from "./Notices.svelte";
 
   interface Props {
     settings: Settings | null;
@@ -22,8 +23,10 @@
     onclear: () => Promise<void>;
     /** Names, icons and the picker for the excluded-apps list. */
     apps: AppDirectory;
+    /** The bundled third-party licence notices, for "Acknowledgements…". */
+    notices: () => Promise<string>;
   }
-  let { settings, onsave, onpause, onclear, apps }: Props = $props();
+  let { settings, onsave, onpause, onclear, apps, notices }: Props = $props();
 
   // A local draft; re-seeded when the saved settings change underneath.
   let draft = $state<Settings | null>(null);
@@ -64,6 +67,13 @@
   let confirmClear = $state(false);
   let pickerOpen = $state(false);
   let addButton = $state<HTMLButtonElement | null>(null);
+  let noticesOpen = $state(false);
+  let noticesButton = $state<HTMLButtonElement | null>(null);
+
+  function closeNotices() {
+    noticesOpen = false;
+    queueMicrotask(() => noticesButton?.focus());
+  }
 
   // The body scrolls between the title bar and the pinned footer. Overlay
   // scroll bars hide when idle, so a divider (and a fade at the bottom) shows
@@ -191,7 +201,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <form
   bind:this={form}
-  inert={pickerOpen}
+  inert={pickerOpen || noticesOpen}
   class="settings"
   aria-label="Settings"
   onsubmit={save}
@@ -298,6 +308,10 @@
           <button type="button" class="small" bind:this={addButton} onclick={() => (pickerOpen = true)}>Add App…</button>
         </div>
       </fieldset>
+
+      <p class="about">
+        <button type="button" class="quiet" bind:this={noticesButton} onclick={() => (noticesOpen = true)}>Acknowledgements…</button>
+      </p>
     </div>
 
     <div class="actions" class:divided={moreBelow}>
@@ -333,6 +347,10 @@
 
 {#if pickerOpen && draft}
   <AppPicker {apps} excluded={draft.excludedAppIds} onadd={addApp} onclose={closePicker} />
+{/if}
+
+{#if noticesOpen}
+  <Notices load={notices} onclose={closeNotices} />
 {/if}
 
 <style>
@@ -513,6 +531,25 @@
   }
   .danger-quiet {
     color: var(--danger);
+  }
+  /* A quiet line under the sections, out of the way of the settings. */
+  .about {
+    grid-column: 1 / -1;
+    margin: -6px 0 0;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .quiet {
+    height: 22px;
+    padding: 0 8px;
+    background: transparent;
+    color: var(--sec);
+    font-size: 11.5px;
+    font-weight: 400;
+  }
+  .quiet:hover:not(:disabled) {
+    background: transparent;
+    color: var(--label);
   }
   /* Pinned under the scrolling body. */
   .actions {

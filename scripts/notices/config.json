@@ -1,0 +1,39 @@
+{
+  "$comment": "pnpm notices (scripts/notices.ts). The licence allow-list is `accepted` in about.toml, next to this file.",
+  "cargoAbout": "0.9.3",
+  "rust": {
+    "manifest": "src-tauri/Cargo.toml",
+    "package": "satchel",
+    "features": ["tauri/custom-protocol"]
+  },
+  "web": {
+    "$comment": "Vite modes the front end is built in: the installed Satchel and Satchel Dev.",
+    "modes": ["production", "dev-app"],
+    "$virtualModules": "Bundler-generated modules and the package (a > b: b as found from a) whose code they are.",
+    "virtualModules": {
+      "\u0000rolldown/runtime.js": "vite > rolldown",
+      "\u0000vite/preload-helper.js": "vite"
+    },
+    "$packages": "Per-package adjustments. licenseEnd: keep the licence file up to this line (Vite's file goes on to list the licences of its own bundled build tools, none of which ship). extraFiles: also include these files.",
+    "packages": {
+      "vite": {
+        "licenseEnd": "# Licenses of bundled dependencies",
+        "note": "Only Vite's module preload helper is in Satchel."
+      },
+      "rolldown": {
+        "extraFiles": ["THIRD-PARTY-LICENSE"],
+        "note": "Only Rolldown's module runtime helpers are in Satchel."
+      }
+    },
+    "$embedded": "Code copied into another package. Its licence is the comment at the top of `module`, which must be in the bundle.",
+    "embedded": [
+      {
+        "name": "tslib",
+        "license": "0BSD",
+        "module": "@tauri-apps/api/external/tslib/tslib.es6.js",
+        "note": "Copied into @tauri-apps/api.",
+        "repository": "https://github.com/microsoft/tslib"
+      }
+    ]
+  }
+}

@@ -76,3 +76,5 @@ Bug reports and fixes with tests are welcome. See [CONTRIBUTING.md](CONTRIBUTING
 ## Licence
 
 [MIT](LICENSE). Satchel uses open source libraries under their own licences (mostly MIT and Apache-2.0).
+
+Satchel includes open source software from other projects; their licences and copyright notices are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) and in the app under Settings › Acknowledgements….

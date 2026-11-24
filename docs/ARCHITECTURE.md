@@ -183,6 +183,7 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `list_apps` | — | `AppInfo[]` (`{ id, name, running }`) — installed apps (macOS: `.app` bundles in `/Applications`, `/System/Applications`, `/System/Library/CoreServices/Applications`, `~/Applications`, one sub-folder deep) merged with running regular apps, one per id (case-insensitive), sorted by name |
 | `resolve_apps` | `ids: string[]` | `(AppInfo \| null)[]` — the installed app for each id (Launch Services), in order; `null` when not on this machine |
 | `get_app_icon` | `id` | raw PNG bytes (`ArrayBuffer`, 64 px square); `not found` when not installed. Rendered once and cached in Rust until the settings window closes. Used by the settings window's app list and by the shelf's cards (the clip's `sourceApp.id`) |
+| `get_third_party_notices` | — | `string` — the bundled `THIRD-PARTY-NOTICES.txt` (app resources), shown by the settings window's "Acknowledgements…" dialog as plain text. Reads only that file |
 | `choose_app` | — | `AppInfo \| null` — native open panel restricted to applications (run by Rust on the main thread; no dialog plugin, no file access for the web view); `null` when cancelled |
 | | | The four app commands do their work off the main thread. Other platforms return empty lists / `null` for now; adding by identifier still works |
 
@@ -278,8 +279,9 @@ Events emitted by Rust:
   `open_accessibility_settings`, `get_app_icon` (icons only: it cannot
   list or choose apps) and `get_link_image` (cached bytes only);
   `settings` may use only `get_settings`, `save_settings`,
-  `set_capture_paused`, `clear_history`, `close_settings` and the app
-  picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`.
+  `set_capture_paused`, `clear_history`, `close_settings`, the app
+  picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`, and
+  `get_third_party_notices`.
   Both may listen to events. Neither gets plugin or core window
   permissions.
 - Excluded apps in Settings: the stored list is unchanged (bundle ids /

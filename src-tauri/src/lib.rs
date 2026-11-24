@@ -10,6 +10,7 @@ mod ctx;
 mod error;
 mod events;
 mod link_preview;
+mod notices;
 mod paste;
 mod platform;
 mod settings_window;
@@ -235,6 +236,7 @@ pub fn run() {
             commands::resolve_apps,
             commands::get_app_icon,
             commands::choose_app,
+            commands::get_third_party_notices,
         ])
         .setup(|app| setup(app.handle()))
         .build(tauri::generate_context!())

@@ -459,6 +459,8 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       return drawAppIcon(hit[1], hit[2]);
     },
     choose_app: () => ({ id: CHOSEN_APP[0], name: CHOSEN_APP[1], running: false }),
+    get_third_party_notices: () =>
+      "THIRD-PARTY SOFTWARE NOTICES FOR SATCHEL\n\n(Mock mode: the app shows THIRD-PARTY-NOTICES.txt from its bundle.)\n",
   };
 
   function knownApp(id: string): [string, string, string] | undefined {

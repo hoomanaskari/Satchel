@@ -63,6 +63,7 @@
   <SettingsPanel
     {settings}
     {apps}
+    notices={() => api.getThirdPartyNotices()}
     onsave={(s) => api.saveSettings(s)}
     onpause={async (p) => {
       await api.setCapturePaused(p);

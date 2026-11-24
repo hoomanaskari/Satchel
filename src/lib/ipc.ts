@@ -130,6 +130,7 @@ export async function getAppIcon(id: string): Promise<Uint8Array> {
   return bytes(await call("get_app_icon", { id }));
 }
 export const chooseApp = (): Promise<AppInfo | null> => call("choose_app");
+export const getThirdPartyNotices = (): Promise<string> => call("get_third_party_notices");
 
 // ---- events ----
 
@@ -169,6 +170,7 @@ export const api = {
   resolveApps,
   getAppIcon,
   chooseApp,
+  getThirdPartyNotices,
   onClipsChanged,
   onPinboardsChanged,
   onShelfShown,
