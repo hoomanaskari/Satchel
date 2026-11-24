@@ -10,8 +10,10 @@
     validateSettings,
   } from "$lib/settings-form";
   import { addExcluded, excludedView, removeExcluded, type AppDirectory, type ExcludedRow } from "$lib/excluded-apps";
+  import { APP_NAME } from "$lib/app-name";
   import { isMac } from "$lib/platform";
-  import type { AppInfo, Settings } from "$lib/types";
+  import type { AppInfo, Settings, UpdateStatus } from "$lib/types";
+  import { percent, updateLine } from "$lib/updates";
   import AppIcon from "./AppIcon.svelte";
   import AppPicker from "./AppPicker.svelte";
   import Notices from "./Notices.svelte";
@@ -25,8 +27,27 @@
     apps: AppDirectory;
     /** The bundled third-party licence notices, for "Acknowledgements…". */
     notices: () => Promise<string>;
+    /** Where updates stand, and the two things the user can do about them. */
+    updates: { status: UpdateStatus | null; check: () => Promise<void>; install: () => Promise<void> };
   }
-  let { settings, onsave, onpause, onclear, apps, notices }: Props = $props();
+  let { settings, onsave, onpause, onclear, apps, notices, updates }: Props = $props();
+
+  // Updates: Rust checks, downloads, verifies and installs; this shows where
+  // it stands. `now` is taken when the status changes (no timer).
+  const update = $derived(updates.status);
+  const updateNow = $derived(update ? Date.now() : 0);
+  const updateBusy = $derived(
+    !!update && (update.checking || update.phase.state === "downloading" || update.phase.state === "installing"),
+  );
+  let updateError = $state("");
+  async function runUpdate(action: () => Promise<void>) {
+    updateError = "";
+    try {
+      await action();
+    } catch (err) {
+      updateError = err instanceof Error ? err.message : String(err);
+    }
+  }
 
   // A local draft; re-seeded when the saved settings change underneath.
   let draft = $state<Settings | null>(null);
@@ -48,6 +69,7 @@
         draft.captureImages !== settings.captureImages ||
         draft.pasteOnSelect !== settings.pasteOnSelect ||
         draft.linkPreviews !== settings.linkPreviews ||
+        draft.checkForUpdates !== settings.checkForUpdates ||
         draft.shelfShortcut !== settings.shelfShortcut ||
         draft.excludedAppIds.join("\n") !== settings.excludedAppIds.join("\n")),
   );
@@ -288,6 +310,44 @@
           to show its title and image. Sign-in, one-time and private-network links are never fetched. Turn off to stop
           fetching and delete saved previews.
         </p>
+      </fieldset>
+
+      <fieldset class="updates">
+        <legend>Updates</legend>
+        {#if update}
+          <div class="row">
+            <span class="version">{APP_NAME} {update.currentVersion}</span>
+            <span class="spacer"></span>
+            {#if update.supported}
+              <button type="button" class="small" disabled={updateBusy} onclick={() => runUpdate(updates.check)}>
+                {update.checking ? "Checking…" : "Check Now"}
+              </button>
+            {/if}
+          </div>
+          <p class="update-line" class:failed={update.phase.state === "failed"} role="status">{updateLine(update, updateNow)}</p>
+          {#if update.phase.state === "downloading"}
+            <progress max="100" value={percent(update.phase)} aria-label="Download progress"></progress>
+          {:else if update.phase.state === "available" || update.phase.state === "failed"}
+            <div class="row">
+              <button type="button" class="small primary" onclick={() => runUpdate(updates.install)}>
+                {update.phase.state === "failed" ? "Try Again" : `Update to ${APP_NAME} ${update.phase.version}`}
+              </button>
+            </div>
+          {/if}
+          {#if updateError}<p class="error">{updateError}</p>{/if}
+          {#if update.supported}
+            <label class="check">
+              <input type="checkbox" bind:checked={draft.checkForUpdates} aria-describedby="updates-hint" />
+              Check for updates automatically
+            </label>
+            <p class="muted" id="updates-hint">
+              Asks GitHub for the newest version when {APP_NAME} starts and every 6 hours. Nothing about you or your clips is
+              sent. Updates install only when you choose, after their signature is checked. Off: no automatic checks.
+            </p>
+          {/if}
+        {:else}
+          <p class="muted">Loading…</p>
+        {/if}
       </fieldset>
 
       <fieldset class="apps">
@@ -569,5 +629,23 @@
   }
   .spacer {
     flex: 1;
+  }
+  .version {
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .update-line {
+    margin: 0;
+    font-size: 12px;
+    color: var(--sec);
+    font-variant-numeric: tabular-nums;
+  }
+  .update-line.failed {
+    color: var(--danger);
+  }
+  progress {
+    width: 100%;
+    height: 6px;
+    accent-color: var(--accent);
   }
 </style>

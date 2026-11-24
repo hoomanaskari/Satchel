@@ -1,6 +1,6 @@
 [package]
 name = "satchel"
-version = "0.1.0"
+version = "0.1.1"
 description = "Satchel clipboard manager"
 license = "MIT"
 edition = "2024"
@@ -37,6 +37,12 @@ png = "0.18"
 # checked before connecting. Not the Tauri HTTP plugin: nothing is exposed
 # to the web view.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+# Updates of the installed Satchel (`updates.rs`), used from Rust only: no
+# window gets its permissions. Official Tauri plugin: checks GitHub's
+# latest.json, verifies the archive's minisign signature (and signed
+# version), swaps the app bundle in place. Brings reqwest/hyper with rustls
+# (ring), tar/flate2 and zip. Not registered in Satchel Dev.
+tauri-plugin-updater = "2"
 
 # macOS: these crates are already pulled in by tao/wry; listing them here only
 # enables the AppKit classes Satchel calls directly.

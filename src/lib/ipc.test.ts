@@ -25,6 +25,7 @@ const settings: Settings = {
   shelfShortcut: "CommandOrControl+Shift+V",
   pasteOnSelect: true,
   linkPreviews: false,
+  checkForUpdates: true,
 };
 
 afterEach(() => ipc.setTransport(null));
@@ -57,6 +58,9 @@ describe("commands", () => {
     ["getAppIcon", () => ipc.getAppIcon("com.apple.Notes"), "get_app_icon", { id: "com.apple.Notes" }],
     ["chooseApp", () => ipc.chooseApp(), "choose_app", undefined],
     ["getThirdPartyNotices", () => ipc.getThirdPartyNotices(), "get_third_party_notices", undefined],
+    ["getUpdateStatus", () => ipc.getUpdateStatus(), "get_update_status", undefined],
+    ["checkForUpdates", () => ipc.checkForUpdates(), "check_for_updates", undefined],
+    ["installUpdate", () => ipc.installUpdate(), "install_update", undefined],
   ];
 
   it.each(cases)("%s invokes the contract command with camelCase args", async (_n, call, cmd, args) => {
@@ -112,6 +116,12 @@ describe("events", () => {
     ["onShelfShown", ipc.onShelfShown, "shelf-shown", null],
     ["onSettingsChanged", ipc.onSettingsChanged, "settings-changed", settings],
     ["onCaptureSkipped", ipc.onCaptureSkipped, "capture-skipped", { kind: "image", limitBytes: 64_000_000 }],
+    [
+      "onUpdateStatus",
+      ipc.onUpdateStatus,
+      "update-status",
+      { supported: true, currentVersion: "0.1.1", checking: false, phase: { state: "idle" }, lastCheck: null },
+    ],
   ] as const)("%s listens to %s and hands over the payload", async (_n, fn, event, payload) => {
     const { t, handlers, unlisten } = fakeTransport();
     ipc.setTransport(t);

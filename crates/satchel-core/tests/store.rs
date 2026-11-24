@@ -801,6 +801,7 @@ fn settings_default_until_saved_then_round_trip() {
         shelf_shortcut: "Alt+Space".into(),
         paste_on_select: false,
         link_previews: true,
+        check_for_updates: false,
     };
     s.save_settings(&custom).unwrap();
     assert_eq!(s.settings().unwrap(), custom);
@@ -812,6 +813,15 @@ fn settings_default_until_saved_then_round_trip() {
     };
     s.save_settings(&empty_list).unwrap();
     assert_eq!(s.settings().unwrap(), empty_list);
+}
+
+#[test]
+fn update_checks_are_on_by_default_and_round_trip() {
+    assert!(Settings::default().check_for_updates);
+    let mut s = store();
+    s.save_settings(&Settings { check_for_updates: false, ..Settings::default() }).unwrap();
+    assert!(!s.settings().unwrap().check_for_updates);
+    // Settings saved without the field (Satchel 0.1.0): see store_file.rs.
 }
 
 // ------------------------------------------------- images and rich text

@@ -57,7 +57,7 @@ pub fn is_dev() -> bool {
     is_dev_id(id())
 }
 
-fn is_dev_id(id: &str) -> bool {
+pub fn is_dev_id(id: &str) -> bool {
     id.ends_with(DEV_SUFFIX)
 }
 
@@ -67,8 +67,11 @@ pub fn default_shortcut() -> String {
     default_shortcut_for(id())
 }
 
+/// Only the installed Satchel starts with ⇧⌘V; every other build (Satchel
+/// Dev, the update rehearsal's "Satchel Rehearsal") starts with ⌥⇧⌘V, so
+/// it never opens alongside the installed Satchel's shelf.
 fn default_shortcut_for(id: &str) -> String {
-    if is_dev_id(id) { DEV_SHORTCUT.to_string() } else { Settings::default().shelf_shortcut }
+    if id == PRODUCTION_ID { Settings::default().shelf_shortcut } else { DEV_SHORTCUT.to_string() }
 }
 
 #[cfg(test)]
@@ -89,6 +92,8 @@ mod tests {
         assert!(is_dev_id("app.satchel.desktop.dev"));
         assert!(!is_dev_id(PRODUCTION_ID));
         assert_eq!(default_shortcut_for("app.satchel.desktop.dev"), DEV_SHORTCUT);
+        assert_eq!(default_shortcut_for("app.satchel.desktop.rehearsal"), DEV_SHORTCUT);
+        assert_eq!(default_shortcut_for(PRODUCTION_ID), Settings::default().shelf_shortcut);
         assert_ne!(DEV_SHORTCUT, Settings::default().shelf_shortcut);
         assert_eq!(crate::shortcut::normalize(DEV_SHORTCUT).unwrap(), DEV_SHORTCUT);
     }
@@ -106,5 +111,23 @@ mod tests {
         let dev_id = dev["identifier"].as_str().unwrap();
         assert!(is_dev_id(dev_id) && dev_id.starts_with(PRODUCTION_ID));
         assert_eq!(dev["productName"], "Satchel Dev");
+    }
+
+    #[test]
+    fn only_the_installed_satchel_has_an_update_feed() {
+        let read = |path: &str| -> serde_json::Value {
+            let text = std::fs::read_to_string(format!("{}/{path}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            serde_json::from_str(&text).unwrap()
+        };
+        let updater = &read("tauri.conf.json")["plugins"]["updater"];
+        assert_eq!(
+            updater["endpoints"],
+            serde_json::json!(["https://github.com/hoomanaskari/Satchel/releases/latest/download/latest.json"])
+        );
+        assert_eq!(updater["requireSignedVersion"], true);
+        assert!(updater["pubkey"].as_str().is_some_and(|k| k.len() > 100));
+        let keys: Vec<&String> = updater.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 3, "no dangerous or downgrade options: {keys:?}");
+        assert_eq!(read("tauri.dev.conf.json")["plugins"]["updater"]["endpoints"], serde_json::json!([]));
     }
 }

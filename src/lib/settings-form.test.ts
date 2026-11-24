@@ -18,6 +18,7 @@ const base: Settings = {
   shelfShortcut: "CommandOrControl+Shift+V",
   pasteOnSelect: true,
   linkPreviews: false,
+  checkForUpdates: true,
 };
 
 type Ev = Parameters<typeof acceleratorFromEvent>[0];

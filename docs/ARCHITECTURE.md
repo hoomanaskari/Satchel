@@ -18,11 +18,15 @@ compiling fallback on the other platforms.
 
 ### Security rules (non-negotiable)
 
-- No network access except link previews, which are on by default and
-  run only while "Show link previews" is on (see "Link previews" below);
-  turned off, Satchel makes no request at all. No telemetry, no update pings, no remote fonts or
-  scripts. The web view never reaches the network: Rust fetches and hands
-  over bytes. Do not add HTTP, shell, opener or filesystem plugins.
+- No network access except two features, each on by default and each with
+  its own off switch: link previews, only while "Show link previews" is on
+  (see "Link previews" below), and update checks of the installed Satchel,
+  only while "Check for updates automatically" is on or when the user asks
+  (see "Updates" below; Satchel Dev never checks). With both off, Satchel
+  makes no request on its own. No telemetry, no remote fonts or scripts.
+  The web view never reaches the network: Rust fetches and hands over
+  bytes. Do not add HTTP, shell, opener or filesystem plugins; the updater
+  plugin is used from Rust only and no window is granted its permissions.
 - Strict CSP in `tauri.conf.json`: `default-src 'self'`; no `unsafe-eval`; no
   remote origins. Images load only from the app's own scheme/IPC.
 - Tauri capabilities are minimal and scoped to the windows that need them:
@@ -175,7 +179,7 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `pin_clip` | `clipId, pinboardId` | `void` |
 | `unpin_clip` | `clipId, pinboardId` | `void` |
 | `get_settings` | — | `Settings` |
-| `save_settings` | `settings: Settings` | `void` — turning `linkPreviews` off deletes every cached preview (then `clips-changed` `updated`); turning it on wakes the preview workers |
+| `save_settings` | `settings: Settings` | `void` — turning `linkPreviews` off deletes every cached preview (then `clips-changed` `updated`); turning it on wakes the preview workers; `checkForUpdates` starts or stops the automatic update checks |
 | `set_capture_paused` | `paused: boolean` | `void` |
 | `hide_shelf` | — | `void` |
 | `open_settings` | — | `void` — hides the shelf (focus is not handed back) and opens or focuses the settings window |
@@ -184,6 +188,9 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `resolve_apps` | `ids: string[]` | `(AppInfo \| null)[]` — the installed app for each id (Launch Services), in order; `null` when not on this machine |
 | `get_app_icon` | `id` | raw PNG bytes (`ArrayBuffer`, 64 px square); `not found` when not installed. Rendered once and cached in Rust until the settings window closes. Used by the settings window's app list and by the shelf's cards (the clip's `sourceApp.id`) |
 | `get_third_party_notices` | — | `string` — the bundled `THIRD-PARTY-NOTICES.txt` (app resources), shown by the settings window's "Acknowledgements…" dialog as plain text. Reads only that file |
+| `get_update_status` | — | `UpdateStatus` (`{ supported, currentVersion, checking, phase, lastCheck }`, see "Updates"). Never touches the network |
+| `check_for_updates` | — | `void` — starts a check in the background (settings window); the result arrives as `update-status`. Fails with "updates are not available in this build" in Satchel Dev |
+| `install_update` | — | `void` — downloads, verifies and installs the update on offer, then relaunches; progress arrives as `update-status`. Does nothing when no update is on offer |
 | `choose_app` | — | `AppInfo \| null` — native open panel restricted to applications (run by Rust on the main thread; no dialog plugin, no file access for the web view); `null` when cancelled |
 | | | The four app commands do their work off the main thread. Other platforms return empty lists / `null` for now; adding by identifier still works |
 
@@ -198,6 +205,7 @@ Events emitted by Rust:
 | `shelf-shown` | — | the shelf was just shown; UI resets search, selects the first clip and focuses the search field |
 | `settings-changed` | `Settings` | settings saved (sent to every window: the shelf picks up changes made in the settings window) |
 | `capture-skipped` | `{ kind: ClipKind, limitBytes: number }` | a copy was over a size cap and not stored (no content in the payload); the shelf shows a notice |
+| `update-status` | `UpdateStatus` | anything about updates changed (a check started or finished, an update was found, download progress at most once per percent, install, failure) |
 
 ## Windows
 
@@ -280,10 +288,14 @@ Events emitted by Rust:
   list or choose apps) and `get_link_image` (cached bytes only);
   `settings` may use only `get_settings`, `save_settings`,
   `set_capture_paused`, `clear_history`, `close_settings`, the app
-  picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`, and
-  `get_third_party_notices`.
-  Both may listen to events. Neither gets plugin or core window
-  permissions.
+  picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`,
+  `get_third_party_notices`, and `get_update_status`, `check_for_updates`
+  and `install_update`. The shelf also gets `get_update_status` and
+  `install_update` (for its update control) but not `check_for_updates`.
+  Both may listen to events. Neither gets plugin permissions (not the
+  updater's: Rust calls the updater, the windows only call these three
+  commands) or core window permissions. The CSP is unchanged by updates:
+  no window connects anywhere.
 - Excluded apps in Settings: the stored list is unchanged (bundle ids /
   executables, matched case-insensitively by `should_capture`). The window
   lists each excluded app that is installed here by icon and name
@@ -296,8 +308,12 @@ Events emitted by Rust:
   (`BUILT_IN_DEFAULTS` in `src/lib/excluded-apps.ts`, kept equal by a Rust
   test). "Add App…" opens a searchable picker over `list_apps`, plus "Choose
   Other App…" (`choose_app`) and "Add by Identifier…".
-- Tray / menu bar icon with: Show Satchel, Settings…, Pause Capturing, Clear
-  History, Quit. No dock icon on macOS (accessory activation policy).
+- Tray / menu bar icon with: Show Satchel, Settings…, Check for Updates…,
+  Pause Capturing, Clear History, Quit. While an update is on offer, the
+  menu starts with "Update to Satchel <version>…" (then "Downloading
+  Satchel <version>… 42%" or "Installing…", disabled, while it runs) and the
+  icon carries a dot (see "Updates"). Satchel Dev has no update items. No
+  dock icon on macOS (accessory activation policy).
 - Menu bar icon animation (`tray_anim.rs`, `platform/macos_tray.rs`): when
   capture stores a clip, new or a re-copy bumped to the top
   (`EventSink::clip_saved`; not for refused, paused, skipped, too-large or
@@ -310,7 +326,13 @@ Events emitted by Rust:
   `with_inner_tray_icon` / `ns_status_item`) from an `NSTimer` in the common
   run loop modes that exists only while the animation runs. Clips during a
   run join it, rewind it seamlessly once the card is in, or queue at most
-  one replay. Reduce Motion: no animation. Other platforms: no-op. The
+  one replay. The "update available" dot (`render_badged`: a solid dot in
+  the top right corner inside a clear ring, touching no glyph ink in any
+  frame, tested) is drawn into every frame and into the resting icon, so a
+  running animation picks it up on its next frame and ends on the badged
+  icon; with no animation the resting icon is swapped once. Being part of
+  the template image, it follows light and dark menu bars and the
+  highlighted state. Reduce Motion: no animation. Other platforms: no-op. The
   capture thread posts at most one hop to the main thread at a time.
   `SATCHEL_TRAY_SHEET=<png> cargo test -p satchel tray_sheet -- --ignored`
   writes every frame to a contact sheet for review.
@@ -446,6 +468,76 @@ like thumbnails; the CSP is unchanged.
 
 `SATCHEL_TRACE=1` logs each preview's outcome and skip reason (never the
 link, title or host).
+
+## Updates
+
+The installed Satchel updates itself; Satchel Dev never does (its overlay
+empties the feed, `updates_supported` is false for any `.dev` identifier,
+and the updater plugin is not even registered). Implementation:
+`src-tauri/src/updates.rs` (state machine and scheduler, tested with a fake
+source) around Tauri's official updater plugin, `tauri-plugin-updater`,
+called from Rust only.
+
+- **Feed.** `plugins.updater.endpoints` in `tauri.conf.json`:
+  `https://github.com/hoomanaskari/Satchel/releases/latest/download/latest.json`,
+  which GitHub redirects to the newest published (not draft, not
+  pre-release) release's `latest.json`. The URL has no variables, so it
+  says nothing about the Mac or the running version.
+- **What a check sends.** One HTTPS GET of that URL (following GitHub's
+  redirect to its download host), with only `Accept: application/json` and
+  `User-Agent: tauri-plugin-updater/<plugin version>`; no cookies, no
+  query, no body, no identifier, no Satchel version, no settings, nothing
+  about clips. GitHub sees the IP address and the time. The system proxy
+  settings apply. The version in the answer is compared locally.
+- **When.** With "Check for updates automatically" on (`Settings.check_for_updates`,
+  stored as `check_for_updates`; missing means on, so settings saved by
+  0.1.0 upgrade with it on): `FIRST_CHECK_AFTER_MS` (5 s) after launch,
+  then every `CHECK_EVERY_MS` (6 h), or `RETRY_AFTER_FAILURE_MS` (1 h)
+  after a failed check. The scheduler thread sleeps on a condition
+  variable until the next check is due; with the setting off it sleeps
+  until the setting is turned on, so no background request is ever made
+  (tested). "Check for Updates…" (tray) and "Check Now" (Settings) check
+  on demand whatever the setting. Checks time out after 30 s.
+- **Install**, only when the user chooses "Update to …" (tray, the shelf's
+  update control or Settings): the archive
+  `Satchel_<version>_aarch64.app.tar.gz` is downloaded from the versioned
+  release (`releases/download/v<version>/…`, 15 min timeout; that request
+  necessarily names the new version) and its minisign signature checked
+  against `plugins.updater.pubkey`; `requireSignedVersion` makes the
+  signature also bind the version, so an older signed archive cannot be
+  offered under a newer number. Then the app bundle is swapped in place
+  (atomically on APFS; macOS asks for an administrator password only if
+  the user cannot write to the app's folder) and Satchel relaunches, after
+  any paste in progress (it takes the paste lock). Failures are reported
+  only as `download`, `verify` or `install`; nothing else from the error
+  reaches the UI or the log.
+- **Showing it.** Status changes (`UpdateStatus`) go to the tray and, as
+  `update-status`, to open windows. Nothing is shown unasked and focus is
+  never taken: the menu bar icon gets its dot and the menu its item; the
+  shelf, when the user opens it, shows a persistent "Update to <version>"
+  control after "Paused" (a state, not a notice: progress while it runs,
+  "Update Failed" to retry); Settings › Updates shows the version, the last
+  check ("up to date (checked 5 min ago)"), progress and the controls.
+  "Check for Updates…" in the tray answers in a native popup when its check
+  is done: "Satchel is up to date" (with the version), "Satchel <version>
+  is available" with Update / Later, or "Couldn't check for updates".
+  Choosing "Update to …" in the tray (or Update in that popup) starts the
+  install at once; the tray item shows its progress, and a failure is told
+  in a popup ("… was not installed", with the content-free reason). These
+  popups appear only after the user's own menu choice. The last check is
+  kept in memory only.
+- **Release side.** `pnpm release` makes the archive from the notarized,
+  stapled app, signs it with the update key (`~/.tauri/satchel-updater.key`,
+  outside the repository) and writes `latest.json`, verified against the
+  public key before it finishes (`scripts/update-feed.ts`,
+  `scripts/lib/release-update.ts`). Its gate refuses a config whose feed is
+  not GitHub's, that lacks the key or `requireSignedVersion`, or that sets
+  any other updater option (plain HTTP, invalid certificates, downgrades).
+- **Rehearsal.** `scripts/update-rehearsal.sh` builds a separate "Satchel
+  Rehearsal" (`app.satchel.desktop.rehearsal`) whose feed is
+  `http://127.0.0.1:<port>/latest.json`, passed with `tauri build --config`
+  and so compiled into those binaries only. Satchel takes its feed from the
+  config embedded in its binary; nothing read at run time can change it.
 
 ## Testing
 

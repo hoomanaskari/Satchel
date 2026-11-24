@@ -61,6 +61,12 @@ const ITEM_TOP_TO: f64 = 11.0 * PT;
 const ITEM_FADE: f64 = 0.35;
 /// Clear gap around the card, so it stays readable over other ink.
 const MOAT: f64 = 0.045;
+/// The "update available" badge: a dot in the top right corner, clear of
+/// the handle and the body (the ring around it, `BADGE_MOAT` wide, touches
+/// no ink), so the satchel keeps its shape and the dot reads as added.
+const BADGE_CENTER: (f64, f64) = (15.25 * PT, 2.75 * PT);
+const BADGE_RADIUS: f64 = 2.25 * PT;
+const BADGE_MOAT: f64 = 0.75 * PT;
 
 /// What the glyph looks like at one instant.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -251,9 +257,29 @@ fn ink(x: f64, y: f64, pose: &Pose) -> f64 {
     back()
 }
 
+/// Ink with the update badge: the dot, a clear ring around it, the glyph
+/// elsewhere. The badge is drawn into every frame, so the animation runs
+/// under it and ends on the badged resting icon.
+fn ink_badged(x: f64, y: f64, pose: &Pose) -> f64 {
+    let d = ((x - BADGE_CENTER.0).powi(2) + (y - BADGE_CENTER.1).powi(2)).sqrt();
+    if d <= BADGE_RADIUS {
+        1.0
+    } else if d <= BADGE_RADIUS + BADGE_MOAT {
+        0.0
+    } else {
+        ink(x, y, pose)
+    }
+}
+
 /// Black-on-transparent RGBA template image of `pose`, `size` pixels
 /// square, supersampled (finer at small sizes, where each pixel counts).
 pub fn render(size: u32, pose: &Pose) -> Vec<u8> {
+    render_badged(size, pose, false)
+}
+
+/// [`render`], with the "update available" dot when `badge` is set.
+pub fn render_badged(size: u32, pose: &Pose, badge: bool) -> Vec<u8> {
+    let ink = if badge { ink_badged } else { ink };
     let ss: u32 = if size <= 24 { 6 } else { 4 };
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for py in 0..size {
@@ -508,9 +534,33 @@ mod tests {
     /// review the animation by eye:
     /// `SATCHEL_TRAY_SHEET=/tmp/sheet.png cargo test -p satchel tray_sheet -- --ignored`
     #[test]
+    fn badge_adds_a_dot_and_removes_no_ink_in_any_frame() {
+        for size in [18u32, 36] {
+            for t in times() {
+                let pose = pose_at(t);
+                let plain = render(size, &pose);
+                let badged = render_badged(size, &pose, true);
+                assert!(badged.chunks(4).all(|p| p[..3] == [0, 0, 0]), "a template image");
+                for (a, b) in plain.chunks(4).zip(badged.chunks(4)) {
+                    assert!(a[3] == b[3] || a[3] == 0, "the badge covers glyph ink at {t}");
+                }
+            }
+            let rest = render_badged(size, &Pose::REST, true);
+            assert_eq!(render_badged(size, &pose_at(DURATION), true), rest, "ends on the badged icon");
+            let alpha = |x: f64, y: f64| rest[(((y * size as f64) as u32 * size + (x * size as f64) as u32) * 4 + 3) as usize];
+            assert_eq!(alpha(BADGE_CENTER.0, BADGE_CENTER.1), 255, "the dot is solid");
+            let added = rest.chunks(4).zip(render(size, &Pose::REST).chunks(4)).filter(|(b, a)| b[3] > a[3]).count();
+            let area = (size * size) as usize;
+            assert!(added > area / 60 && added < area / 12, "a small dot: {added} of {area}");
+        }
+    }
+
+    #[test]
     #[ignore]
     fn tray_sheet() {
         let Some(path) = std::env::var_os("SATCHEL_TRAY_SHEET") else { return };
+        // SATCHEL_TRAY_BADGE=1: the frames with the "update available" dot.
+        let badge = std::env::var_os("SATCHEL_TRAY_BADGE").is_some();
         let fps = 60.0;
         let n = (DURATION * fps).ceil() as u32 + 1;
         let (cell, zoom) = (36u32, 3u32);
@@ -520,7 +570,7 @@ mod tests {
         for i in 0..n {
             let pose = pose_at(i as f64 / fps);
             for (row, size) in [(0u32, 36u32), (1, 18)] {
-                let frame = render(size, &pose);
+                let frame = render_badged(size, &pose, badge);
                 let scale = zoom * cell / size;
                 for y in 0..size * scale {
                     for x in 0..size * scale {

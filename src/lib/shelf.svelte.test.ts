@@ -552,3 +552,45 @@ describe("paused indicator", () => {
     expect(shelf.paused).toBe(true);
   });
 });
+
+describe("update control", () => {
+  it("is hidden until an update is on offer, and never as a notice", async () => {
+    expect(shelf.update).toBeNull();
+    mock.publishUpdate("0.2.0");
+    await mock.transport.invoke("check_for_updates");
+    expect(shelf.update).toMatchObject({ label: "Update to 0.2.0", actionable: true });
+    expect(shelf.notice).toBeNull();
+  });
+
+  it("starts the update and follows its progress", async () => {
+    mock.publishUpdate("0.2.0");
+    await mock.transport.invoke("check_for_updates");
+    await shelf.installUpdate();
+    expect(cmds()).toContain("install_update");
+    expect(shelf.update).toMatchObject({ label: "Installing…", actionable: false });
+    // Nothing more to start while it installs.
+    const n = mock.log.length;
+    await shelf.installUpdate();
+    expect(mock.log.length).toBe(n);
+  });
+
+  it("offers to try a failed update again", async () => {
+    mock.publishUpdate("0.2.0");
+    mock.failNextInstall("verify");
+    await mock.transport.invoke("check_for_updates");
+    await shelf.installUpdate();
+    expect(shelf.update).toMatchObject({ label: "Update Failed", actionable: true, tone: "failed" });
+    mock.failNextInstall(null);
+    await shelf.installUpdate();
+    expect(shelf.update?.label).toBe("Installing…");
+  });
+
+  it("picks up an offer found while the shelf was hidden when it opens", async () => {
+    shelf.setVisible(false);
+    mock.publishUpdate("0.2.0");
+    await mock.transport.invoke("check_for_updates");
+    mock.show();
+    await flush();
+    expect(shelf.update?.label).toBe("Update to 0.2.0");
+  });
+});

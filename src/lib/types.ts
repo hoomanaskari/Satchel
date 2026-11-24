@@ -90,6 +90,34 @@ export interface Settings {
   pasteOnSelect: boolean;
   /** Fetch the title and image of copied web links (the only use of the network). On by default. */
   linkPreviews: boolean;
+  /**
+   * Ask GitHub for a newer Satchel at launch and every 6 hours (the installed
+   * Satchel only). On by default. Off: no background request; a manual check
+   * still works.
+   */
+  checkForUpdates: boolean;
+}
+
+/** What stopped an update (no details: never a URL, path or error text). */
+export type UpdateFailure = "download" | "verify" | "install";
+
+/** Where an update on offer stands. */
+export type UpdatePhase =
+  | { state: "idle" }
+  | { state: "available"; version: string }
+  | { state: "downloading"; version: string; downloaded: number; total: number | null }
+  | { state: "installing"; version: string }
+  | { state: "failed"; version: string; during: UpdateFailure };
+
+export interface UpdateStatus {
+  /** False in Satchel Dev, which never checks or updates. */
+  supported: boolean;
+  currentVersion: string;
+  /** A check is in flight. */
+  checking: boolean;
+  phase: UpdatePhase;
+  /** The last check that finished since launch. */
+  lastCheck: { at: number; outcome: "upToDate" | "available" | "failed" } | null;
 }
 
 export type ClipsChangedReason = "inserted" | "bumped" | "deleted" | "cleared" | "updated";
@@ -145,6 +173,12 @@ export interface Commands {
   choose_app: { args: undefined; ret: AppInfo | null };
   /** The third-party licence notices bundled with the app, as plain text. */
   get_third_party_notices: { args: undefined; ret: string };
+  /** Where updates stand (no network). */
+  get_update_status: { args: undefined; ret: UpdateStatus };
+  /** Checks for an update in the background (settings window); the result arrives as `update-status`. */
+  check_for_updates: { args: undefined; ret: void };
+  /** Downloads, verifies and installs the update on offer, then relaunches. */
+  install_update: { args: undefined; ret: void };
 }
 
 export type CommandName = keyof Commands;
@@ -156,6 +190,7 @@ export interface Events {
   "shelf-shown": null;
   "settings-changed": Settings;
   "capture-skipped": CaptureSkipped;
+  "update-status": UpdateStatus;
 }
 
 export type EventName = keyof Events;

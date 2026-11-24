@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "The settings window may read and save settings, pause capturing, clear history, close itself, list apps (names and icons, plus the native app chooser) for the excluded-apps picker, read the bundled third-party licence notices and listen to Satchel's events. Nothing else: no clip content, no paste, no plugin permissions.",
+  "description": "The settings window may read and save settings, pause capturing, clear history, close itself, list apps (names and icons, plus the native app chooser) for the excluded-apps picker, read the bundled third-party licence notices and listen to Satchel's events. It may read the update status, check for an update and start installing one; Rust does all of it. Nothing else: no clip content, no paste, no plugin permissions (not the updater's either).",
   "local": true,
   "windows": [
     "settings"
@@ -18,6 +18,9 @@
     "allow-resolve-apps",
     "allow-get-app-icon",
     "allow-choose-app",
-    "allow-get-third-party-notices"
+    "allow-get-third-party-notices",
+    "allow-get-update-status",
+    "allow-check-for-updates",
+    "allow-install-update"
   ]
 }

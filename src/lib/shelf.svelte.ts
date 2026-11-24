@@ -11,7 +11,18 @@ import type { KeyAction } from "./keyboard";
 import { Pager } from "./paging";
 import type { Filters, KindScope } from "./query";
 import * as sel from "./selection";
-import type { CaptureSkipped, ClipId, ClipKind, ClipSummary, ClipsChanged, Pinboard, PinboardId, Settings } from "./types";
+import type {
+  CaptureSkipped,
+  ClipId,
+  ClipKind,
+  ClipSummary,
+  ClipsChanged,
+  Pinboard,
+  PinboardId,
+  Settings,
+  UpdateStatus,
+} from "./types";
+import { shelfUpdate, type ShelfUpdate } from "./updates";
 
 export type ClickMode = "single" | "toggle" | "range";
 
@@ -67,6 +78,8 @@ export class Shelf {
 
   pinboards = $state.raw<Pinboard[]>([]);
   settings = $state.raw<Settings | null>(null);
+  /** Where updates stand (Rust sends every change as `update-status`). */
+  updateStatus = $state.raw<UpdateStatus | null>(null);
   selection = $state.raw<sel.Selection>(sel.empty());
   firstVisible = $state(0);
 
@@ -171,6 +184,15 @@ export class Shelf {
     return this.settings?.capturePaused ?? false;
   }
 
+  /**
+   * The top bar's update control while an update is on offer: a state like
+   * "Paused", not a notice. It never appears by itself in front of the user:
+   * the shelf shows it only when opened.
+   */
+  get update(): ShelfUpdate | null {
+    return shelfUpdate(this.updateStatus);
+  }
+
   get pasteOnSelect(): boolean {
     return this.settings?.pasteOnSelect ?? true;
   }
@@ -195,8 +217,9 @@ export class Shelf {
       this.api.onShelfShown(() => void this.onShown()),
       this.api.onSettingsChanged((s) => (this.settings = s)),
       this.api.onCaptureSkipped((p) => this.onCaptureSkipped(p)),
+      this.api.onUpdateStatus((s) => (this.updateStatus = s)),
     ]);
-    await Promise.all([this.loadSettings(), this.loadPinboards(), this.reload()]);
+    await Promise.all([this.loadSettings(), this.loadPinboards(), this.loadUpdateStatus(), this.reload()]);
     return () => {
       this.search.cancel();
       for (const stop of stops) stop();
@@ -231,7 +254,7 @@ export class Shelf {
     this.focusSearchTick++;
     // Settings too, so a missed `settings-changed` (the pause state above
     // all) never leaves the header stale.
-    await Promise.all([this.loadSettings(), this.reload()]);
+    await Promise.all([this.loadSettings(), this.loadUpdateStatus(), this.reload()]);
     // After the reload, whose new selection clears the notice.
     if (this.pendingNotice) {
       this.flash = this.pendingNotice;
@@ -253,6 +276,14 @@ export class Shelf {
       this.settings = await this.api.getSettings();
     } catch (e) {
       this.fail(e);
+    }
+  }
+
+  private async loadUpdateStatus(): Promise<void> {
+    try {
+      this.updateStatus = await this.api.getUpdateStatus();
+    } catch {
+      // Not worth a notice: the control just stays hidden.
     }
   }
 
@@ -584,6 +615,15 @@ export class Shelf {
       await this.api.setCapturePaused(paused);
       if (this.settings) this.settings = { ...this.settings, capturePaused: paused };
     });
+  }
+
+  /**
+   * Downloads, verifies and installs the update on offer; Satchel then
+   * reopens. Progress comes back through `update-status`.
+   */
+  async installUpdate(): Promise<void> {
+    if (!this.update?.actionable) return;
+    await this.attempt(() => this.api.installUpdate());
   }
 
   /** Opens the settings window; Rust hides the shelf first. */

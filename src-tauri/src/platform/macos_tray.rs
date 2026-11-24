@@ -33,7 +33,10 @@ const FRAME_SECONDS: f64 = 1.0 / 60.0;
 
 struct State {
     button: Retained<NSStatusBarButton>,
+    /// The resting icon, with the badge when `badge` is set.
     rest: Retained<NSImage>,
+    /// "Update available": every frame and the resting icon carry the dot.
+    badge: bool,
     animator: Animator,
     timer: Option<Retained<NSTimer>>,
 }
@@ -55,13 +58,14 @@ fn now() -> f64 {
 /// the menu bar: it draws black.)
 const DEV_RGB: [u8; 3] = [10, 132, 255];
 
-/// A template image of `pose`, 18 pt square, with 1x and 2x bitmaps; for
-/// Satchel Dev a blue one instead (not a template).
-fn image(pose: &Pose) -> Option<Retained<NSImage>> {
+/// A template image of `pose` (with the update badge when `badge`), 18 pt
+/// square, with 1x and 2x bitmaps; for Satchel Dev a blue one instead (not
+/// a template).
+fn image(pose: &Pose, badge: bool) -> Option<Retained<NSImage>> {
     let dev = crate::app_identity::is_dev();
     let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(POINTS, POINTS));
     for px in PIXELS {
-        let mut rgba = crate::tray_anim::render(px, pose);
+        let mut rgba = crate::tray_anim::render_badged(px, pose, badge);
         if dev {
             for pixel in rgba.as_chunks_mut::<4>().0 {
                 pixel[..3].copy_from_slice(&DEV_RGB);
@@ -80,10 +84,30 @@ fn image(pose: &Pose) -> Option<Retained<NSImage>> {
 /// bitmap, sharper on non-Retina displays than the tray's single 2x one)
 /// and remembers the button for the animation.
 pub fn install(mtm: MainThreadMarker, item: &NSStatusItem) {
-    let (Some(button), Some(rest)) = (item.button(mtm), image(&Pose::REST)) else { return };
+    let (Some(button), Some(rest)) = (item.button(mtm), image(&Pose::REST, false)) else { return };
     button.setImage(Some(&rest));
     STATE.with_borrow_mut(|state| {
-        *state = Some(State { button, rest, animator: Animator::default(), timer: None });
+        *state = Some(State { button, rest, badge: false, animator: Animator::default(), timer: None });
+    });
+}
+
+/// Shows or hides the "update available" dot. While an animation runs the
+/// next frame picks it up (frames are drawn with the current badge) and the
+/// animation ends on the new resting icon; otherwise the resting icon is
+/// replaced at once. Either way the image changes once, with no flash of
+/// the other state.
+pub fn set_badge(_mtm: MainThreadMarker, on: bool) {
+    STATE.with_borrow_mut(|state| {
+        let Some(s) = state.as_mut() else { return };
+        if s.badge == on {
+            return;
+        }
+        let Some(rest) = image(&Pose::REST, on) else { return };
+        s.badge = on;
+        s.rest = rest;
+        if s.timer.is_none() {
+            s.button.setImage(Some(&s.rest));
+        }
     });
 }
 
@@ -127,7 +151,7 @@ fn tick() {
         let Some(s) = state.as_mut() else { return };
         match s.animator.frame(now()) {
             Frame::Pose(pose) => {
-                if let Some(img) = image(&pose) {
+                if let Some(img) = image(&pose, s.badge) {
                     s.button.setImage(Some(&img));
                 }
             }

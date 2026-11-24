@@ -503,6 +503,38 @@ pub fn confirm(mtm: MainThreadMarker, message: &str, informative: &str, confirm_
     alert.runModal() == NSAlertFirstButtonReturn
 }
 
+/// A modal informational alert (activates Satchel, which the user asked
+/// for by choosing a menu item). Returns the index of the button pressed;
+/// the first button is the default. When it closes and Satchel has no
+/// window of its own on screen, Satchel hides, so focus goes back to the app
+/// that was in front.
+pub fn alert(mtm: MainThreadMarker, message: &str, informative: &str, buttons: &[&str]) -> usize {
+    use objc2_app_kit::{NSAlertSecondButtonReturn, NSAlertThirdButtonReturn};
+    let app = NSApplication::sharedApplication(mtm);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    let alert = NSAlert::new(mtm);
+    alert.setAlertStyle(NSAlertStyle::Informational);
+    alert.setMessageText(&NSString::from_str(message));
+    alert.setInformativeText(&NSString::from_str(informative));
+    for title in buttons {
+        alert.addButtonWithTitle(&NSString::from_str(title));
+    }
+    let pressed = alert.runModal();
+    let index = if pressed == NSAlertSecondButtonReturn {
+        1
+    } else if pressed == NSAlertThirdButtonReturn {
+        2
+    } else {
+        0
+    };
+    let others_open = app.windows().iter().any(|w| w.isVisible() && w.canBecomeKeyWindow() && !w.isKindOfClass(objc2_app_kit::NSPanel::class()));
+    if !others_open {
+        app.hide(None);
+    }
+    index
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

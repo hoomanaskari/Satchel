@@ -10,9 +10,10 @@
   import { api } from "$lib/ipc";
   import { closesSettingsWindow } from "$lib/keyboard";
   import { isMac } from "$lib/platform";
-  import type { Settings } from "$lib/types";
+  import type { Settings, UpdateStatus } from "$lib/types";
 
   let settings = $state.raw<Settings | null>(null);
+  let updateStatus = $state.raw<UpdateStatus | null>(null);
   let error = $state("");
 
   // Icon URLs live as long as this window (it is destroyed on close).
@@ -40,9 +41,17 @@
       .getSettings()
       .then((s) => (settings ??= s))
       .catch((e) => (error = message(e)));
+    let stopUpdates: (() => void) | null = null;
+    api
+      .onUpdateStatus((s) => (updateStatus = s))
+      .then((u) => (gone ? u() : (stopUpdates = u)))
+      .then(() => api.getUpdateStatus())
+      .then((s) => (updateStatus ??= s))
+      .catch((e) => (error = message(e)));
     return () => {
       gone = true;
       stop?.();
+      stopUpdates?.();
     };
   });
 
@@ -64,6 +73,7 @@
     {settings}
     {apps}
     notices={() => api.getThirdPartyNotices()}
+    updates={{ status: updateStatus, check: () => api.checkForUpdates(), install: () => api.installUpdate() }}
     onsave={(s) => api.saveSettings(s)}
     onpause={async (p) => {
       await api.setCapturePaused(p);

@@ -29,6 +29,9 @@ const COMMANDS: &[&str] = &[
     "get_app_icon",
     "choose_app",
     "get_third_party_notices",
+    "get_update_status",
+    "check_for_updates",
+    "install_update",
 ];
 
 fn main() {

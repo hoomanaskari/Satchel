@@ -1,6 +1,6 @@
 <script lang="ts">
   // Inline SVG icons; decorative, so hidden from assistive tech.
-  type Name = "search" | "pin" | "more" | "plus" | "close" | "image" | "file" | "check" | "link" | "pause" | "play";
+  type Name = "search" | "pin" | "more" | "plus" | "close" | "image" | "file" | "check" | "link" | "pause" | "play" | "update" | "alert";
   let { name, size = 15, filled = false }: { name: Name; size?: number; filled?: boolean } = $props();
 </script>
 
@@ -36,6 +36,14 @@
     <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
   {:else if name === "pause"}
     <g fill="currentColor"><rect x="6.5" y="5" width="3.6" height="14" rx="1.2"></rect><rect x="13.9" y="5" width="3.6" height="14" rx="1.2"></rect></g>
+  {:else if name === "update"}
+    <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"></circle><path d="M12 16.5v-9M8 11l4-4 4 4"></path>
+    </g>
+  {:else if name === "alert"}
+    <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3.5l9.5 16.5h-19z"></path><path d="M12 10v4.5"></path><circle cx="12" cy="17.6" r="0.6" fill="currentColor"></circle>
+    </g>
   {:else if name === "play"}
     <path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.4-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z" fill="currentColor"></path>
   {/if}

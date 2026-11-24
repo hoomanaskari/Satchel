@@ -33,6 +33,7 @@ pub fn sample_settings() -> Settings {
         shelf_shortcut: "CommandOrControl+Shift+V".into(),
         paste_on_select: true,
         link_previews: false,
+        check_for_updates: false,
     }
 }
 

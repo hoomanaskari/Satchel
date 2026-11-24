@@ -20,7 +20,8 @@ without touching the clips you use.
 | App icon | `src-tauri/icons/Satchel.icon` | the same with a blue DEV band (`src-tauri/icons/dev/`) |
 | Menu bar icon | follows the menu bar (black or white) | blue |
 | Signing | Developer ID, hardened runtime, notarized and stapled | the same Developer ID certificate, not notarized |
-| Packaging | DMG and its SHA-256 checksum | `Satchel Dev.app` only |
+| Packaging | DMG, signed update archive, `latest.json`, checksums | `Satchel Dev.app` only |
+| Updates | checks GitHub on launch and every 6 hours (Settings can turn it off), installs when you choose | never: no updater, no update items (`tauri.dev.conf.json` empties the feed) |
 
 ## What you need
 
@@ -29,8 +30,8 @@ without touching the clips you use.
 - Rust (stable), Node 24 and pnpm (`pnpm install` once).
 - For signed builds: a **Developer ID Application** certificate in your login Keychain. Check with
   `security find-identity -v -p codesigning`. Without one, `pnpm app` signs ad-hoc (see below).
-- For releases only: `brew install create-dmg`, the notary login (see "Once, before the first
-  release") and cargo-about (see "Third-party notices").
+- For releases only: `brew install create-dmg`, the notary login and the update key (see "Once,
+  before the first release") and cargo-about (see "Third-party notices").
 
 ## Satchel Dev
 
@@ -163,11 +164,22 @@ building and checks that the built app contains the same file.
 
    The release script uses the profile named `satchel-notary`; set `SATCHEL_NOTARY_PROFILE` to use
    another one you already have. Nothing about the login is stored in this repository.
+3. **The update key** at `~/.tauri/satchel-updater.key` (readable only by you: `chmod 600`). Every
+   installed Satchel accepts an update only if it was signed with this key; its public half is
+   `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. It is Satchel's own key, not Moss
+   Mail's.
+   - **Back it up** (in a password manager, for example) together with its `.pub` file. If it is
+     lost, Satchel can never update itself again: everyone has to download the next version by
+     hand, and the public key in the config has to be replaced.
+   - **Never share or commit it.** `SATCHEL_UPDATER_KEY=/path/to/key` uses a key kept elsewhere.
+   - It was made once with `pnpm tauri signer generate -w ~/.tauri/satchel-updater.key` (no
+     password). Making a new one is only for a lost or leaked key; see above for what that costs.
 
 ### Each release
 
 1. Set the version (`pnpm set-version 0.2.0`), write what's new in
-   `docs/release-notes/0.2.0.md`, commit and push to `main`.
+   `docs/release-notes/0.2.0.md` (for people, not developers: it goes on the GitHub release and
+   into the update itself), commit and push to `main`.
 2. Run:
 
    ```bash
@@ -176,7 +188,7 @@ building and checks that the built app contains the same file.
 
    It stops unless the tree is clean, on `main`, the same as `origin/main`, the version has no tag
    yet, the config is the installed Satchel's (not Satchel Dev's), a Developer ID certificate and
-   the notary login are present. Then it:
+   the notary login, the update key and the release notes are present. Then it:
 
    - runs `pnpm notices --check`, `pnpm check`, `pnpm test`, `cargo test` and `cargo clippy`,
    - builds `Satchel.app` from `tauri.conf.json` in its own Cargo folder, `target/production`, so
@@ -186,17 +198,31 @@ building and checks that the built app contains the same file.
      secure timestamp,
    - sends it to Apple to notarize, staples the ticket and asks Gatekeeper to assess it,
    - makes the DMG, signs it, notarizes and staples it,
-   - writes `SHA256SUMS.txt`.
+   - makes the update: the same notarized, stapled `Satchel.app` as a `.app.tar.gz`, signed with
+     the update key for this version (`tauri signer sign --app-version`),
+   - writes `latest.json` (version, release notes, date, and for `darwin-aarch64` the archive's
+     signature and its URL on the versioned GitHub release) and checks it, and the archive's
+     signature, against the public key in `tauri.conf.json` (`scripts/update-feed.ts`),
+   - writes `SHA256SUMS.txt`, and lists the files to attach.
 
    The result is in `target/satchel-release/<version>/`:
 
    ```
    Satchel_<version>_aarch64.dmg
+   Satchel_<version>_aarch64.app.tar.gz
+   Satchel_<version>_aarch64.app.tar.gz.sig   (inside latest.json; no need to attach)
+   latest.json
    SHA256SUMS.txt
    ```
 
 3. Tag the release (`git tag v0.2.0 && git push origin v0.2.0`), create a GitHub release for the
-   tag with `docs/release-notes/0.2.0.md` as its text, and attach the DMG and `SHA256SUMS.txt`.
+   tag with `docs/release-notes/0.2.0.md` as its text, and attach the DMG, the `.app.tar.gz`,
+   `latest.json` and `SHA256SUMS.txt`. The file names must stay as they are: `latest.json` points
+   at `https://github.com/hoomanaskari/Satchel/releases/download/v0.2.0/Satchel_0.2.0_aarch64.app.tar.gz`.
+4. **Publish** it (not as a draft or pre-release). Installed copies read
+   `releases/latest/download/latest.json`, which is the newest published release's, so publishing
+   is what offers the update: within 6 hours, or at their next launch. A bad release can't be taken
+   back from people who installed it; publish a fixed, higher version instead.
 
 To rehearse without notarizing (no notary login needed, and the tree may have changes):
 
@@ -204,8 +230,42 @@ To rehearse without notarizing (no notary login needed, and the tree may have ch
 pnpm release --local
 ```
 
-That does everything except notarization and stapling, into `target/satchel-release/local/<version>/`.
-Its DMG is signed but Gatekeeper refuses it on other Macs.
+That does everything except notarization and stapling, into `target/satchel-release/local/<version>/`,
+including the signed update archive and `latest.json`. Its DMG is signed but Gatekeeper refuses it
+on other Macs; publish nothing from it.
+
+### Rehearsing an update
+
+To watch an update work from start to finish without publishing anything:
+
+```bash
+sh scripts/update-rehearsal.sh
+```
+
+It builds a separate app, **Satchel Rehearsal** (`app.satchel.desktop.rehearsal`: its own data
+folder and `⌥⇧⌘V`, never your installed Satchel's), twice: as 0.0.1 and 0.0.2. Both have the
+installed Satchel's updater and public key, but their update feed is
+`http://127.0.0.1:8975/latest.json` (a port can be given: `sh scripts/update-rehearsal.sh 9000`).
+Then it makes the 0.0.2 update the way `pnpm release` does, signed with the real update key, and a
+copy with one byte of the archive changed, into `target/update-rehearsal/`. Then:
+
+1. Serve the update: `python3 -m http.server 8975 --bind 127.0.0.1 --directory target/update-rehearsal/feed`
+2. Open `target/update-rehearsal/run/Satchel Rehearsal.app`. Within seconds its menu bar icon gets
+   a dot and its menu starts with **Update to Satchel Rehearsal 0.0.2…**.
+3. Choose it. Satchel Rehearsal downloads it (the menu item shows the progress), installs it and
+   reopens as 0.0.2 (Settings › Updates shows the version). **Check for Updates…** then says it is
+   up to date in a popup.
+4. To see a tampered update refused, serve `target/update-rehearsal/tampered` instead and start
+   again from a fresh 0.0.1 (run the script again). A popup (and Settings) says the update couldn't
+   be verified, and the app stays as it was.
+5. Quit Satchel Rehearsal, stop the server and remove what it left:
+   `rm -rf target/update-rehearsal ~/Library/Application\ Support/app.satchel.desktop.rehearsal ~/Library/Caches/app.satchel.desktop.rehearsal ~/Library/WebKit/app.satchel.desktop.rehearsal`
+
+The local feed is build-time configuration (`tauri build --config`), compiled into those two
+binaries only. Satchel reads its feed from the config inside its own binary, and nothing at run
+time (no environment variable, file or flag) changes it; `pnpm release` refuses a config whose
+feed is not GitHub's or that allows plain HTTP. So there is no switch on an installed Satchel that
+could point it elsewhere, and every update must still carry Satchel's signature.
 
 ### Checking a release by hand
 
@@ -219,7 +279,7 @@ shasum -a 256 -c target/satchel-release/0.2.0/SHA256SUMS.txt
 
 ### Not included
 
-- **Updates.** Satchel has no updater: it makes no network request except link previews. A new
-  version is installed by downloading the new DMG.
+- **An update for Satchel 0.1.0.** 0.1.0 has no updater; its users install the next version by
+  hand once, from the DMG. Every version after that updates itself.
 - **Intel Macs.** The release is built for the Mac that builds it (Apple silicon: `aarch64`).
 - **Windows and Linux** packaging.

@@ -22,6 +22,7 @@ import type {
   PinboardId,
   Query,
   Settings,
+  UpdateStatus,
 } from "./types";
 
 export interface Transport {
@@ -131,6 +132,9 @@ export async function getAppIcon(id: string): Promise<Uint8Array> {
 }
 export const chooseApp = (): Promise<AppInfo | null> => call("choose_app");
 export const getThirdPartyNotices = (): Promise<string> => call("get_third_party_notices");
+export const getUpdateStatus = (): Promise<UpdateStatus> => call("get_update_status");
+export const checkForUpdates = (): Promise<void> => call("check_for_updates");
+export const installUpdate = (): Promise<void> => call("install_update");
 
 // ---- events ----
 
@@ -139,6 +143,7 @@ export const onPinboardsChanged = (h: (p: null) => void) => on("pinboards-change
 export const onShelfShown = (h: (p: null) => void) => on("shelf-shown", h);
 export const onSettingsChanged = (h: (p: Settings) => void) => on("settings-changed", h);
 export const onCaptureSkipped = (h: (p: CaptureSkipped) => void) => on("capture-skipped", h);
+export const onUpdateStatus = (h: (p: UpdateStatus) => void) => on("update-status", h);
 
 /** Everything above as one object, so state modules can take it as a dependency. */
 export const api = {
@@ -171,11 +176,15 @@ export const api = {
   getAppIcon,
   chooseApp,
   getThirdPartyNotices,
+  getUpdateStatus,
+  checkForUpdates,
+  installUpdate,
   onClipsChanged,
   onPinboardsChanged,
   onShelfShown,
   onSettingsChanged,
   onCaptureSkipped,
+  onUpdateStatus,
 };
 
 export type Api = typeof api;

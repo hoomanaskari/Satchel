@@ -192,6 +192,11 @@ pub struct Settings {
     /// uses the network). On by default, including for settings saved before
     /// it existed; links that look private or one-time are never fetched.
     pub link_previews: bool,
+    /// Ask GitHub Releases for a newer Satchel at launch and every 6 hours
+    /// (the installed Satchel only; Satchel Dev never checks). On by
+    /// default, including for settings saved before it existed. Off: no
+    /// background request at all; "Check for Updates…" still works.
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -205,6 +210,7 @@ impl Default for Settings {
             shelf_shortcut: "CommandOrControl+Shift+V".to_string(),
             paste_on_select: true,
             link_previews: true,
+            check_for_updates: true,
         }
     }
 }

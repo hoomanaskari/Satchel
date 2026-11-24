@@ -66,6 +66,17 @@ pub fn tray_clip_saved() {
     }
 }
 
+/// Shows or hides the menu bar icon's "update available" dot. Main thread
+/// only. TODO(windows, linux): badge the tray icon there too.
+pub fn tray_set_badge(on: bool) {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        macos_tray::set_badge(mtm, on);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontApp {
     pub pid: i32,

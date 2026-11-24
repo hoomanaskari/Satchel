@@ -20,6 +20,7 @@ mod storage;
 mod thumbnail;
 mod tray;
 mod tray_anim;
+mod updates;
 mod validate;
 mod watcher;
 mod window_frame;
@@ -66,6 +67,9 @@ impl<R: Runtime> EventSink for TauriEvents<R> {
         if let Some(item) = self.app.try_state::<tray::PauseItem<R>>() {
             let _ = item.0.set_checked(settings.capture_paused);
         }
+        if let Some(updates) = self.app.try_state::<Arc<updates::Updates>>() {
+            updates.set_auto(settings.check_for_updates);
+        }
     }
     fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64) {
         let _ = self.app.emit(events::CAPTURE_SKIPPED, CaptureSkipped { kind, limit_bytes });
@@ -73,6 +77,32 @@ impl<R: Runtime> EventSink for TauriEvents<R> {
     fn clip_saved(&self) {
         tray::clip_saved(&self.app);
     }
+}
+
+/// Sends update status changes to every window and to the tray.
+struct TauriUpdateEvents<R: Runtime> {
+    app: AppHandle<R>,
+}
+
+impl<R: Runtime> updates::UpdateEvents for TauriUpdateEvents<R> {
+    fn status_changed(&self, status: &updates::UpdateStatus) {
+        let _ = self.app.emit(updates::UPDATE_STATUS, status);
+        tray::update_status(&self.app, status);
+    }
+}
+
+/// Whether this build updates itself: the installed Satchel, with an update
+/// feed in its config. Satchel Dev (`tauri.dev.conf.json` empties the feed)
+/// never does, and the updater plugin is not even registered for it.
+fn updates_supported(config: &tauri::Config) -> bool {
+    let has_feed = config
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("endpoints"))
+        .and_then(|e| e.as_array())
+        .is_some_and(|e| !e.is_empty());
+    has_feed && !app_identity::is_dev_id(&config.identifier)
 }
 
 /// Creates the data directory readable by the current user only.
@@ -170,7 +200,18 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
     app.manage(shelf);
     Shelf::install_blur_handler(app);
 
-    tray::create(app, settings.capture_paused)?;
+    let supported = updates_supported(app.config());
+    let updates = updates::Updates::new(
+        supported,
+        app.package_info().version.to_string(),
+        settings.check_for_updates,
+        Arc::new(updates::PluginSource { app: app.clone(), found: Mutex::new(None), ctx: ctx.clone() }),
+        Arc::new(TauriUpdateEvents { app: app.clone() }),
+        Arc::new(SystemClock),
+    );
+    app.manage(updates.clone());
+
+    tray::create(app, settings.capture_paused, supported)?;
 
     if shortcuts.register(&settings.shelf_shortcut).is_err() {
         let fallback = app_identity::default_shortcut();
@@ -186,6 +227,9 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         Arc::new(link_preview::SystemImages),
     )?;
     watcher::spawn(ctx)?;
+    // Installed Satchel only; asleep between checks, and until turned on
+    // while "Check for updates automatically" is off.
+    updates.spawn_scheduler()?;
     Ok(())
 }
 
@@ -198,7 +242,12 @@ fn on_shortcut<R: Runtime>(app: &AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let mut builder = tauri::Builder::default();
+    if updates_supported(context.config()) {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -237,9 +286,12 @@ pub fn run() {
             commands::get_app_icon,
             commands::choose_app,
             commands::get_third_party_notices,
+            commands::get_update_status,
+            commands::check_for_updates,
+            commands::install_update,
         ])
         .setup(|app| setup(app.handle()))
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building the app")
         .run(|_app, event| {
             // An accessory app with no visible window must keep running.
@@ -252,6 +304,27 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_installed_satchel_with_a_feed_updates() {
+        let read = |path: &str| -> serde_json::Value {
+            let text = std::fs::read_to_string(format!("{}/{path}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            serde_json::from_str(&text).unwrap()
+        };
+        let config = |value: serde_json::Value| -> tauri::Config { serde_json::from_value(value).unwrap() };
+        let mut prod = read("tauri.conf.json");
+        assert!(updates_supported(&config(prod.clone())));
+        // Satchel Dev: the overlay empties the feed and changes the identifier.
+        let dev = read("tauri.dev.conf.json");
+        let mut merged = prod.clone();
+        merged["identifier"] = dev["identifier"].clone();
+        merged["plugins"]["updater"]["endpoints"] = dev["plugins"]["updater"]["endpoints"].clone();
+        assert!(!updates_supported(&config(merged.clone())));
+        merged["plugins"]["updater"]["endpoints"] = prod["plugins"]["updater"]["endpoints"].clone();
+        assert!(!updates_supported(&config(merged)), "a Dev identifier never updates");
+        prod["plugins"]["updater"]["endpoints"] = serde_json::json!([]);
+        assert!(!updates_supported(&config(prod)));
+    }
 
     #[test]
     fn data_dir_is_private() {

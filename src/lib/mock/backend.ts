@@ -19,6 +19,8 @@ import type {
   Query,
   Settings,
   SourceApp,
+  UpdateFailure,
+  UpdateStatus,
 } from "../types";
 
 const PREVIEW_CHARS = 300;
@@ -228,6 +230,7 @@ function defaultSettings(): Settings {
     pasteOnSelect: true,
     // On by default, as in the app.
     linkPreviews: true,
+    checkForUpdates: true,
   };
 }
 
@@ -269,6 +272,10 @@ export interface MockBackend {
   setPastePermission(granted: boolean): void;
   /** Change the pause state without announcing it, as if `settings-changed` were missed. */
   setPausedSilently(paused: boolean): void;
+  /** Put a newer version on the (pretend) update feed; the next check finds it. */
+  publishUpdate(version: string | null): void;
+  /** Make the next install fail at `during`, or succeed again with null. */
+  failNextInstall(during: UpdateFailure | null): void;
 }
 
 export function createMockBackend(opts: MockOptions = {}): MockBackend {
@@ -303,6 +310,14 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
   ];
   let nextBoard = 3;
   let settings = defaultSettings();
+  // Pretend update feed: nothing newer until `publishUpdate`.
+  let feed: string | null = null;
+  let installFailure: UpdateFailure | null = null;
+  let update: UpdateStatus = { supported: true, currentVersion: "0.1.0", checking: false, phase: { state: "idle" }, lastCheck: null };
+  const setUpdate = (next: UpdateStatus) => {
+    update = next;
+    emit("update-status", structuredClone(update));
+  };
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const log: MockBackend["log"] = [];
 
@@ -459,6 +474,29 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       return drawAppIcon(hit[1], hit[2]);
     },
     choose_app: () => ({ id: CHOSEN_APP[0], name: CHOSEN_APP[1], running: false }),
+    get_update_status: () => structuredClone(update),
+    check_for_updates: () => {
+      setUpdate({ ...update, checking: true });
+      const phase: UpdateStatus["phase"] = feed
+        ? update.phase.state === "failed" && update.phase.version === feed
+          ? update.phase
+          : { state: "available", version: feed }
+        : { state: "idle" };
+      setUpdate({ ...update, checking: false, phase, lastCheck: { at: now(), outcome: feed ? "available" : "upToDate" } });
+    },
+    install_update: () => {
+      const p = update.phase;
+      if (p.state !== "available" && p.state !== "failed") return;
+      const version = p.version;
+      setUpdate({ ...update, phase: { state: "downloading", version, downloaded: 0, total: 8_000_000 } });
+      setUpdate({ ...update, phase: { state: "downloading", version, downloaded: 4_000_000, total: 8_000_000 } });
+      if (installFailure) {
+        setUpdate({ ...update, phase: { state: "failed", version, during: installFailure } });
+        return;
+      }
+      // The app would now replace itself and reopen; the mock stays here.
+      setUpdate({ ...update, phase: { state: "installing", version } });
+    },
     get_third_party_notices: () =>
       "THIRD-PARTY SOFTWARE NOTICES FOR SATCHEL\n\n(Mock mode: the app shows THIRD-PARTY-NOTICES.txt from its bundle.)\n",
   };
@@ -518,6 +556,12 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     },
     setPausedSilently(paused) {
       settings = { ...settings, capturePaused: paused };
+    },
+    publishUpdate(version) {
+      feed = version;
+    },
+    failNextInstall(during) {
+      installFailure = during;
     },
   };
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Satchel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "app.satchel.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -71,6 +71,15 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0NzdBNTQ5MDI5NDhENEEKUldSS2paUUNTYVYzZFBUYWF5Wk4vdEQvcGw4ZjFPZmZDOFFwdkJhbmdHUXBJend0RlduODRrSWUK",
+      "endpoints": [
+        "https://github.com/hoomanaskari/Satchel/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true
     }
   }
 }

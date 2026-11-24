@@ -14,5 +14,10 @@
       "icons/dev/icon.icns",
       "icons/dev/Satchel.icon"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": []
+    }
   }
 }

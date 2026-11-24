@@ -666,6 +666,7 @@ impl Store {
                 ("capture_images", Value::Integer(v)) => s.capture_images = v != 0,
                 ("paste_on_select", Value::Integer(v)) => s.paste_on_select = v != 0,
                 ("link_previews", Value::Integer(v)) => s.link_previews = v != 0,
+                ("check_for_updates", Value::Integer(v)) => s.check_for_updates = v != 0,
                 ("shelf_shortcut", Value::Text(v)) => s.shelf_shortcut = v,
                 ("excluded_app_ids", Value::Integer(_)) => has_exclusions = true,
                 _ => {} // unknown or malformed: keep the default
@@ -704,6 +705,7 @@ impl Store {
             put.execute(params!["capture_images", settings.capture_images])?;
             put.execute(params!["paste_on_select", settings.paste_on_select])?;
             put.execute(params!["link_previews", settings.link_previews])?;
+            put.execute(params!["check_for_updates", settings.check_for_updates])?;
             put.execute(params!["shelf_shortcut", settings.shelf_shortcut])?;
             put.execute(params![
                 "excluded_app_ids",

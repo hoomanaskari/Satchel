@@ -53,6 +53,7 @@
   const hasSelection = $derived(shelf.selection.ids.length > 0);
   const labels = $derived(shelf.pasteLabels);
   const notice = $derived(shelf.notice);
+  const update = $derived(shelf.update);
 
   onMount(() => {
     let dispose: (() => void) | null = null;
@@ -330,6 +331,34 @@
         <span class="glyph hover"><Icon name="play" size={11} /></span>
         <span>Paused</span>
       </button>
+    {/if}
+    <!-- Also a state: there while an update is on offer (found by Rust's own
+         checks; nothing pops up). Clicking downloads, verifies and installs it,
+         then Satchel reopens; meanwhile it shows the progress. -->
+    {#if update}
+      {#if update.actionable}
+        <button
+          type="button"
+          class="update {update.tone}"
+          aria-label={update.aria}
+          title={update.title}
+          onclick={() => void shelf.installUpdate()}
+        >
+          <span class="glyph"><Icon name={update.tone === "failed" ? "alert" : "update"} size={12} /></span>
+          <span>{update.label}</span>
+        </button>
+      {:else}
+        <div
+          class="update busy"
+          role="status"
+          aria-label={update.aria}
+          title={update.title}
+          style:--progress={update.progress === null ? null : `${update.progress}%`}
+        >
+          <span class="glyph"><Icon name="update" size={12} /></span>
+          <span>{update.label}</span>
+        </div>
+      {/if}
     {/if}
     <div class="actions">
       <button type="button" class="pill" disabled={!hasSelection} aria-label={labels.plain} onclick={() => void shelf.paste(true)}>
@@ -612,6 +641,49 @@
   @media (prefers-color-scheme: dark) {
     .paused {
       --amber: #ffb340;
+    }
+  }
+  /* The update control: blue, Satchel's accent, so it reads as an offer and
+     not a warning; red only when the last attempt failed. While it downloads
+     the pill fills from the left. Like "Paused", it never shrinks or leaves
+     the bar. */
+  .update {
+    --tint: 0, 113, 227;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px 0 10px;
+    border: none;
+    border-radius: 14px;
+    background: rgba(var(--tint), 0.16);
+    box-shadow: inset 0 0 0 1px rgba(var(--tint), 0.32);
+    color: var(--label);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  button.update:hover {
+    background: rgba(var(--tint), 0.26);
+  }
+  .update .glyph {
+    display: flex;
+    color: rgb(var(--tint));
+  }
+  .update.busy {
+    background: linear-gradient(to right, rgba(var(--tint), 0.28) var(--progress, 0%), rgba(var(--tint), 0.12) var(--progress, 0%));
+  }
+  .update.failed {
+    --tint: 215, 0, 21;
+  }
+  @media (prefers-color-scheme: dark) {
+    .update {
+      --tint: 10, 132, 255;
+    }
+    .update.failed {
+      --tint: 255, 69, 58;
     }
   }
   .actions {

@@ -37,6 +37,22 @@ describe("the two Satchel apps", () => {
     expect(() => assertProduction({})).toThrow("identifier is undefined");
   });
 
+  it("releases only with GitHub's update feed, a key, and signed versions required", () => {
+    const updater = shipped.plugins.updater;
+    const withUpdater = (u: Record<string, unknown>) => ({ ...shipped, plugins: { updater: u } });
+    expect(() => assertProduction(withUpdater({ ...updater, endpoints: ["http://127.0.0.1:8000/latest.json"] }))).toThrow(
+      "its update feed is not GitHub's",
+    );
+    expect(() => assertProduction(withUpdater({ ...updater, pubkey: "" }))).toThrow("it has no update key");
+    expect(() => assertProduction(withUpdater({ ...updater, requireSignedVersion: false }))).toThrow("signed versions");
+    expect(() => assertProduction(withUpdater({ ...updater, dangerousInsecureTransportProtocol: true }))).toThrow(
+      "it sets dangerousInsecureTransportProtocol",
+    );
+    expect(() => assertProduction({ ...shipped, plugins: {} })).toThrow("it has no updater");
+    // Satchel Dev empties the feed.
+    expect(overlay.plugins.updater.endpoints).toEqual([]);
+  });
+
   it("runs `tauri dev` as Satchel Dev and leaves every other command alone", () => {
     expect(tauriArgs(["dev"], "/repo")).toEqual(["dev", "--config", join("/repo", "src-tauri", "tauri.dev.conf.json")]);
     expect(tauriArgs(["dev", "--release"], "/repo")).toEqual(["dev", "--config", devOverlay("/repo"), "--release"]);

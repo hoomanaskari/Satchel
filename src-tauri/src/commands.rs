@@ -407,6 +407,28 @@ pub fn get_third_party_notices(app: tauri::AppHandle) -> CmdResult<String> {
     crate::notices::read(&path)
 }
 
+type UpdatesState<'a> = State<'a, Arc<crate::updates::Updates>>;
+
+/// Where updates stand (shelf and settings window). Never touches the network.
+#[tauri::command(async)]
+pub fn get_update_status(updates: UpdatesState<'_>) -> crate::updates::UpdateStatus {
+    updates.status()
+}
+
+/// Checks for an update now, in the background (settings window). The
+/// result arrives as `update-status`.
+#[tauri::command(async)]
+pub fn check_for_updates(updates: UpdatesState<'_>) -> CmdResult<()> {
+    updates.check_now().map_err(str::to_string)
+}
+
+/// Downloads, verifies and installs the update on offer, then relaunches
+/// (shelf and settings window). Progress arrives as `update-status`.
+#[tauri::command(async)]
+pub fn install_update(updates: UpdatesState<'_>) -> CmdResult<()> {
+    updates.install().map_err(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::api;
