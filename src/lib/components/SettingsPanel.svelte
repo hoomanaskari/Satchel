@@ -12,7 +12,8 @@
   import { addExcluded, excludedView, removeExcluded, type AppDirectory, type ExcludedRow } from "$lib/excluded-apps";
   import { APP_NAME } from "$lib/app-name";
   import { isMac } from "$lib/platform";
-  import type { AppInfo, Settings, UpdateStatus } from "$lib/types";
+  import type { AppInfo, LoginItem, Settings, UpdateStatus } from "$lib/types";
+  import { loginItemHint } from "$lib/login-item";
   import { percent, updateLine } from "$lib/updates";
   import AppIcon from "./AppIcon.svelte";
   import AppPicker from "./AppPicker.svelte";
@@ -29,8 +30,29 @@
     notices: () => Promise<string>;
     /** Where updates stand, and the two things the user can do about them. */
     updates: { status: UpdateStatus | null; check: () => Promise<void>; install: () => Promise<void> };
+    /** "Open at login" as the system has it (read each time the window opens), and its switch. */
+    login: { item: LoginItem | null; set: (enabled: boolean) => Promise<void> };
   }
-  let { settings, onsave, onpause, onclear, apps, notices, updates }: Props = $props();
+  let { settings, onsave, onpause, onclear, apps, notices, updates, login }: Props = $props();
+
+  // Open at login: applied at once by its own control (the system's login
+  // items are the truth, so it is not part of the draft or Save).
+  let loginBusy = $state(false);
+  let loginError = $state("");
+  async function setLogin(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    loginBusy = true;
+    loginError = "";
+    try {
+      await login.set(input.checked);
+    } catch (err) {
+      loginError = err instanceof Error ? err.message : String(err);
+    } finally {
+      // Show the system's answer, whatever was clicked.
+      input.checked = login.item?.enabled ?? false;
+      loginBusy = false;
+    }
+  }
 
   // Updates: Rust checks, downloads, verifies and installs; this shows where
   // it stands. `now` is taken when the status changes (no timer).
@@ -239,6 +261,26 @@
     <p class="muted loading">Loading settings…</p>
   {:else}
     <div class="grid" bind:this={body} onscroll={measureScroll} class:more-above={moreAbove} class:more-below={moreBelow}>
+      <fieldset>
+        <legend>General</legend>
+        {#if login.item}
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={login.item.enabled}
+              disabled={loginBusy || login.item.unavailable !== null}
+              onchange={setLogin}
+              aria-describedby="login-hint"
+            />
+            Open {APP_NAME} at login
+          </label>
+          <p class="muted" id="login-hint">{loginItemHint(login.item, APP_NAME)}</p>
+          {#if loginError}<p class="error">{loginError}</p>{/if}
+        {:else}
+          <p class="muted">Loading…</p>
+        {/if}
+      </fieldset>
+
       <fieldset>
         <legend>History</legend>
         <label class="row">

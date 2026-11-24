@@ -27,6 +27,7 @@ pub trait ClipStore: Send {
     fn unpin(&mut self, clip: ClipId, pinboard: PinboardId) -> Result<()>;
     fn settings(&self) -> Result<Settings>;
     fn save_settings(&mut self, settings: &Settings) -> Result<()>;
+    fn save_open_at_login(&mut self, value: Option<bool>) -> Result<()>;
     fn window_state(&self, name: &str) -> Result<Option<String>>;
     fn save_window_state(&mut self, name: &str, value: &str) -> Result<()>;
     fn queue_link_preview(&mut self, id: ClipId, now: Millis) -> Result<bool>;
@@ -89,6 +90,9 @@ impl ClipStore for Store {
     }
     fn save_settings(&mut self, settings: &Settings) -> Result<()> {
         Store::save_settings(self, settings)
+    }
+    fn save_open_at_login(&mut self, value: Option<bool>) -> Result<()> {
+        Store::save_open_at_login(self, value)
     }
     fn window_state(&self, name: &str) -> Result<Option<String>> {
         Store::window_state(self, name)

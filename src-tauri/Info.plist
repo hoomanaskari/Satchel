@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the bundle's Info.plist by Tauri (`bundle.macOS.infoPlist`), for Satchel and
+	     Satchel Dev. An agent app: no Dock icon and no app switcher entry, from launch on. Without
+	     it macOS starts Satchel as a regular app (a Dock icon until the runtime policy switches it)
+	     and turns it back into one every time it is opened again while running. -->
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>

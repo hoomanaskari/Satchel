@@ -1,6 +1,6 @@
 [package]
 name = "satchel"
-version = "0.1.2"
+version = "0.1.3"
 description = "Satchel clipboard manager"
 license = "MIT"
 edition = "2024"
@@ -60,6 +60,13 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSDate",
   "NSData",
   "NSDictionary",
+  # One Satchel at a time: a later copy asks the running one to show its
+  # shelf (`instance.rs`), and Satchel notes which app was active before it.
+  "NSDistributedNotificationCenter",
+  # Open at login (`platform/macos_login.rs`): SMAppService's errors.
+  "NSError",
+  "NSNotification",
+  "NSOperation",
   "NSFileManager",
   "NSString",
   "NSURL",

@@ -78,6 +78,8 @@ pub struct Ctx {
     pub accessibility_prompted: AtomicBool,
     /// Wakes the link preview workers (see `link_preview`).
     pub link_wake: crate::link_preview::Wake,
+    /// "Open at login" (see `login_item`).
+    pub login_items: Arc<dyn crate::login_item::LoginItems>,
 }
 
 impl Ctx {

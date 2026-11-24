@@ -197,6 +197,14 @@ pub struct Settings {
     /// default, including for settings saved before it existed. Off: no
     /// background request at all; "Check for Updates…" still works.
     pub check_for_updates: bool,
+    /// Open Satchel at login (a login item, macOS 13+, the installed app in
+    /// a stable location only). `None`: not decided yet, which means on: the
+    /// first launch that can register does so, then stores the result,
+    /// including for settings saved before it existed. `Some`: the last
+    /// known state; the system's Login Items list wins over it and it is
+    /// never registered again on its own. Stored only by
+    /// `Store::save_open_at_login`; `save_settings` leaves it as it is.
+    pub open_at_login: Option<bool>,
 }
 
 impl Default for Settings {
@@ -211,6 +219,7 @@ impl Default for Settings {
             paste_on_select: true,
             link_previews: true,
             check_for_updates: true,
+            open_at_login: None,
         }
     }
 }

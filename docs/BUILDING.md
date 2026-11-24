@@ -73,7 +73,10 @@ Satchel Dev and an installed Satchel can run at the same time:
   saved in it. When the saved shortcut cannot be registered at all, each app falls back to its own
   default (⇧⌘V for Satchel, ⌥⇧⌘V for Satchel Dev).
 - **One copy of each.** macOS runs one copy per bundle identifier when apps are opened from Finder
-  or with `open`; Satchel Dev has its own identifier, so it never takes the place of Satchel.
+  or with `open`; Satchel Dev has its own identifier, so it never takes the place of Satchel. A
+  second copy started anyway (`open -n`, or the same app from another folder) asks the running one
+  to show its shelf and quits; `pnpm tauri dev` (a debug build) is exempt, so it can run next to a
+  built Satchel Dev.
 - **Menu bar.** Satchel Dev's menu bar icon is blue and its menu says "Show Satchel Dev" and "Quit
   Satchel Dev".
 - **Accessibility.** System Settings lists "Satchel Dev" separately; turn it on for each app you

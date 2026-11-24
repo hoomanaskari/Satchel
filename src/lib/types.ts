@@ -96,6 +96,23 @@ export interface Settings {
    * still works.
    */
   checkForUpdates: boolean;
+  /**
+   * Open at login, as last known (null: not decided yet, which means on).
+   * Changed only through `set_open_at_login`; saving the form leaves it as
+   * it is. Settings shows the system's state (`get_login_item`).
+   */
+  openAtLogin: boolean | null;
+}
+
+/** Why "Open at login" is not offered: Satchel Dev, macOS before 13, or not in an Applications folder. */
+export type LoginItemUnavailable = "dev" | "macos" | "location";
+
+/** "Open at login" as the system has it. */
+export interface LoginItem {
+  enabled: boolean;
+  /** On, but macOS waits for the user to allow it in System Settings. */
+  requiresApproval: boolean;
+  unavailable: LoginItemUnavailable | null;
 }
 
 /** What stopped an update (no details: never a URL, path or error text). */
@@ -156,6 +173,10 @@ export interface Commands {
   get_settings: { args: undefined; ret: Settings };
   save_settings: { args: { settings: Settings }; ret: void };
   set_capture_paused: { args: { paused: boolean }; ret: void };
+  /** "Open at login" as the system has it (settings window only). */
+  get_login_item: { args: undefined; ret: LoginItem };
+  /** Adds the app to the login items, or removes it; rejects when macOS refuses or it is unavailable. */
+  set_open_at_login: { args: { enabled: boolean }; ret: LoginItem };
   hide_shelf: { args: undefined; ret: void };
   /** Hides the shelf and opens (or focuses) the settings window. */
   open_settings: { args: undefined; ret: void };

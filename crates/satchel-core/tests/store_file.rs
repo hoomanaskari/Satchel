@@ -322,6 +322,7 @@ fn version_2_databases_gain_link_previews_with_the_setting_on() {
         conn.execute_batch(
             &format!("{UNDO_VERSION_3}\n            DELETE FROM settings WHERE key = 'link_previews';
             DELETE FROM settings WHERE key = 'check_for_updates';
+            DELETE FROM settings WHERE key = 'open_at_login';
             PRAGMA user_version = 2;
             "),
         )
@@ -332,6 +333,7 @@ fn version_2_databases_gain_link_previews_with_the_setting_on() {
     assert_eq!(settings.max_items, 500);
     assert!(settings.link_previews, "settings saved before the field existed read as on");
     assert!(settings.check_for_updates, "settings saved before update checks existed read as on");
+    assert_eq!(settings.open_at_login, None, "settings saved before open at login existed are undecided (on)");
     let old = s.list(&Query::default()).unwrap();
     assert_eq!(old.len(), 2);
     assert!(old.iter().all(|c| c.link_preview.is_none()));

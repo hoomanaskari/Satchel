@@ -179,8 +179,10 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `pin_clip` | `clipId, pinboardId` | `void` |
 | `unpin_clip` | `clipId, pinboardId` | `void` |
 | `get_settings` | — | `Settings` |
-| `save_settings` | `settings: Settings` | `void` — turning `linkPreviews` off deletes every cached preview (then `clips-changed` `updated`); turning it on wakes the preview workers; `checkForUpdates` starts or stops the automatic update checks |
+| `save_settings` | `settings: Settings` | `void` — turning `linkPreviews` off deletes every cached preview (then `clips-changed` `updated`); turning it on wakes the preview workers; `checkForUpdates` starts or stops the automatic update checks; `openAtLogin` is left as it is |
 | `set_capture_paused` | `paused: boolean` | `void` |
+| `get_login_item` | — | `LoginItem` — "open at login" as the system has it (`enabled`, `requiresApproval`, `unavailable`: `dev`, `macos` or `location`); also stored as the setting |
+| `set_open_at_login` | `enabled: boolean` | `LoginItem` — registers or unregisters the login item; rejects when it is unavailable or macOS refuses |
 | `hide_shelf` | — | `void` |
 | `open_settings` | — | `void` — hides the shelf (focus is not handed back) and opens or focuses the settings window |
 | `close_settings` | — | `void` — closes the settings window (Escape / Cmd+W inside it) |
@@ -277,17 +279,21 @@ Events emitted by Rust:
   Created on demand and destroyed on close, unlike the shelf: it is rarely
   open and its web view's memory is given back. Single instance: opening it
   again shows and focuses the existing one. Opened from the tray, the
-  shelf's More menu and Cmd/Ctrl+, in the shelf. Satchel stays an accessory
-  app, so opening it activates Satchel (needed for a normal window to take
-  keyboard input); on close, focus goes back to the app that was in front
-  when it opened, unless the user has already switched elsewhere. Closing it
-  never quits Satchel.
+  shelf's More menu and Cmd/Ctrl+, in the shelf. Satchel stays an agent app
+  while it is open too (no Dock icon, not in Cmd+Tab, no menu bar of its
+  own: like most menu bar apps, its window is reached from the menu bar
+  icon); opening it activates Satchel (needed for a normal window to take
+  keyboard input, and the app menu's key equivalents such as Cmd+W, Cmd+Q
+  and the Edit shortcuts still work); on close, focus goes back to the app
+  that was in front when it opened, unless the user has already switched
+  elsewhere. Closing it never quits Satchel.
 - Capabilities: `shelf` may use the clip, pinboard and paste commands plus
   `get_settings`, `set_capture_paused`, `hide_shelf`, `open_settings`,
   `open_accessibility_settings`, `get_app_icon` (icons only: it cannot
   list or choose apps) and `get_link_image` (cached bytes only);
   `settings` may use only `get_settings`, `save_settings`,
-  `set_capture_paused`, `clear_history`, `close_settings`, the app
+  `set_capture_paused`, `get_login_item`, `set_open_at_login`,
+  `clear_history`, `close_settings`, the app
   picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`,
   `get_third_party_notices`, and `get_update_status`, `check_for_updates`
   and `install_update`. The shelf also gets `get_update_status` and
@@ -312,8 +318,57 @@ Events emitted by Rust:
   Pause Capturing, Clear History, Quit. While an update is on offer, the
   menu starts with "Update to Satchel <version>…" (then "Downloading
   Satchel <version>… 42%" or "Installing…", disabled, while it runs) and the
-  icon carries a dot (see "Updates"). Satchel Dev has no update items. No
-  dock icon on macOS (accessory activation policy).
+  icon carries a dot (see "Updates"). Satchel Dev has no update items.
+- Agent app (`instance.rs`): no Dock icon and no app switcher entry, ever.
+  `LSUIElement` in `src-tauri/Info.plist` (merged into both Satchel and
+  Satchel Dev by `bundle.macOS.infoPlist`; `pnpm release` refuses a build
+  without it) makes macOS launch Satchel as an agent and keep it one.
+  Without it, macOS turned Satchel back into a regular app (Dock icon, app
+  menu, in Cmd+Tab) every time it was opened again while running, and the
+  icon did nothing. The accessory activation policy is also set on the
+  `App` before the event loop starts: tao otherwise applies Regular when
+  launching finishes, a moment before `setup`.
+- Opening Satchel again while it runs (Finder, Spotlight, `open -a`) shows
+  the shelf as the shortcut does (`RunEvent::Reopen`); a shelf already up
+  stays up. macOS activates Satchel first, so the shelf pastes into and
+  gives focus back to the app that was active before Satchel (tracked from
+  `NSWorkspaceDidActivateApplicationNotification`), unless Settings is open.
+- One process per bundle identifier. `open -n` (the updater's relaunch) or
+  a second copy of the bundle elsewhere starts another process. At startup
+  (first thing in `setup`) a release build that finds an older process with
+  its identifier waits up to 5 s for it to exit (the relaunch case); if it
+  stays, the new one posts the distributed notification
+  `<identifier>.show-shelf` (the older one shows its shelf) and exits
+  before it creates a tray icon, a shortcut or opens the store. Only the
+  newer process steps aside (later launch, then higher pid), so two started
+  together never both leave. Debug builds (`pnpm tauri dev`) skip the check.
+  The notification carries nothing and anyone local can post it; all it
+  does is what the shortcut does.
+- Open at login (`login_item.rs`, `platform/macos_login.rs`): the app
+  bundle is its own login item through `SMAppService.mainAppService`
+  (macOS 13+), called by message with the class looked up at run time, so
+  no binding crate. Not `tauri-plugin-autostart`: on macOS it writes a
+  LaunchAgent plist that starts the executable path (listed in Login Items
+  as a bare program, left behind or broken when the app moves) or drives
+  System Events over AppleScript (an Automation prompt); it cannot tell
+  that the user removed it in System Settings; and it brings a JS API and
+  its own permissions. `Settings.openAtLogin` is `None` until decided,
+  which means on: the first launch that can register does so (new installs,
+  and 0.1.2 settings, which have no such key), then stores the result.
+  After that Satchel never registers on its own: each launch and each time
+  Settings opens, the system's state is read and stored, so removing
+  Satchel in System Settings › General › Login Items sticks. Only the
+  checkbox in Settings › General registers again; it applies at once (like
+  Pause), and the settings form's Save never touches it (the store writes
+  it with its own statement). Offered only to a release build that is not
+  Satchel Dev, on macOS 13+, from a bundle in `/Applications` or
+  `~/Applications` (`is_stable_location`: not `target/`, `/Volumes`, an
+  App Translocation path or any other folder); elsewhere the checkbox is
+  disabled and says why, and a copy moved to Applications later registers
+  at its first launch there. Satchel Dev never registers (its identifier is
+  its own, so it could not register the installed Satchel anyway). Launched
+  at login, Satchel does what it does at any launch: menu bar icon only, no
+  window, no Dock icon, no focus change.
 - Menu bar icon animation (`tray_anim.rs`, `platform/macos_tray.rs`): when
   capture stores a clip, new or a re-copy bumped to the top
   (`EventSink::clip_saved`; not for refused, paused, skipped, too-large or

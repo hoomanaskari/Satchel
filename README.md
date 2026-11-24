@@ -23,13 +23,14 @@ Satchel keeps a searchable history of what you copy. Press a shortcut, and a she
 
 1. Get the newest `Satchel_<version>_*.dmg` from [Releases](https://github.com/hoomanaskari/Satchel/releases/latest).
 2. Open it and drag Satchel to Applications.
-3. Open Satchel. It lives in the menu bar (a small satchel icon), not in the Dock.
+3. Open Satchel. It lives in the menu bar (a small satchel icon), not in the Dock or the app switcher. Opening it again (from Applications or Spotlight) shows the shelf.
 
 ## First run
 
 1. **Open the shelf** with `⌘⇧V`. You can change the shortcut in Settings.
 2. **Allow pasting.** To paste into other apps, Satchel needs the Accessibility permission. The first time you paste, Satchel copies the clip instead and shows **Open Accessibility Settings…**. Turn Satchel on in System Settings > Privacy & Security > Accessibility, then paste again.
 3. **Check what's excluded.** Settings > Never capture from lists the apps Satchel ignores. Common password managers are on it already.
+4. **It opens at login.** On macOS 13 or later, Satchel adds itself to your login items the first time it runs from the Applications folder, so your history keeps growing after a restart. It starts quietly in the menu bar. To stop it, uncheck **Open Satchel at login** in Settings > General, or remove it in System Settings > General > Login Items; Satchel then never adds itself again.
 
 ## What it does
 
@@ -42,6 +43,7 @@ Satchel keeps a searchable history of what you copy. Press a shortcut, and a she
 - **Titles:** rename a clip so it's easy to find again.
 - **Link previews:** the page's title and image on link cards (see [Privacy](#your-privacy)).
 - **Updates itself:** when a new version is out, the menu bar icon gets a dot and one click installs it (see [Privacy](#your-privacy)).
+- **Opens at login** (macOS 13 or later), quietly in the menu bar. On by default; Settings > General turns it off.
 - **Pause capturing** from the menu bar icon or Settings. The menu bar icon shows a short animation each time a clip is saved (none with Reduce Motion on).
 - **History limits:** keep up to 2,000 clips and 90 days by default. Both are in Settings.
 

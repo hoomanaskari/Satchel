@@ -802,6 +802,7 @@ fn settings_default_until_saved_then_round_trip() {
         paste_on_select: false,
         link_previews: true,
         check_for_updates: false,
+        open_at_login: None,
     };
     s.save_settings(&custom).unwrap();
     assert_eq!(s.settings().unwrap(), custom);
@@ -822,6 +823,27 @@ fn update_checks_are_on_by_default_and_round_trip() {
     s.save_settings(&Settings { check_for_updates: false, ..Settings::default() }).unwrap();
     assert!(!s.settings().unwrap().check_for_updates);
     // Settings saved without the field (Satchel 0.1.0): see store_file.rs.
+}
+
+#[test]
+fn open_at_login_is_undecided_until_stored_and_round_trips() {
+    assert_eq!(Settings::default().open_at_login, None);
+    let mut s = store();
+    assert_eq!(s.settings().unwrap().open_at_login, None);
+    for value in [Some(true), Some(false), None] {
+        s.save_open_at_login(value).unwrap();
+        assert_eq!(s.settings().unwrap().open_at_login, value);
+    }
+}
+
+#[test]
+fn saving_settings_leaves_open_at_login_alone() {
+    let mut s = store();
+    s.save_open_at_login(Some(false)).unwrap();
+    s.save_settings(&Settings { open_at_login: Some(true), max_items: 300, ..Settings::default() }).unwrap();
+    let saved = s.settings().unwrap();
+    assert_eq!(saved.max_items, 300);
+    assert_eq!(saved.open_at_login, Some(false));
 }
 
 // ------------------------------------------------- images and rich text

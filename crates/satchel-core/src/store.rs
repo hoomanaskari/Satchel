@@ -667,6 +667,7 @@ impl Store {
                 ("paste_on_select", Value::Integer(v)) => s.paste_on_select = v != 0,
                 ("link_previews", Value::Integer(v)) => s.link_previews = v != 0,
                 ("check_for_updates", Value::Integer(v)) => s.check_for_updates = v != 0,
+                ("open_at_login", Value::Integer(v)) => s.open_at_login = Some(v != 0),
                 ("shelf_shortcut", Value::Text(v)) => s.shelf_shortcut = v,
                 ("excluded_app_ids", Value::Integer(_)) => has_exclusions = true,
                 _ => {} // unknown or malformed: keep the default
@@ -726,6 +727,18 @@ impl Store {
     /// Native window state (such as the settings window's frame), kept apart
     /// from `Settings`: it lives in the `settings` table under a `window.`
     /// key, which `settings()` ignores and `save_settings()` never writes.
+    /// Stores "open at login" on its own: `save_settings` leaves it alone,
+    /// so a settings form saved meanwhile never undoes it.
+    pub fn save_open_at_login(&mut self, value: Option<bool>) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO settings (key, value) VALUES ('open_at_login', ?1) \
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            )?
+            .execute(params![value])?;
+        Ok(())
+    }
+
     pub fn window_state(&self, name: &str) -> Result<Option<String>> {
         let value: Option<Value> = self
             .conn

@@ -258,6 +258,7 @@ fn live_paste_into_frontmost_app() {
         paste_lock: Default::default(),
         accessibility_prompted: Default::default(),
         link_wake: Default::default(),
+        login_items: h.ctx.login_items.clone(),
     };
     let content = h.ctx.store.lock().content(id).unwrap().unwrap();
     let new = satchel_core::NewClip {

@@ -15,6 +15,10 @@ mod macos_apps;
 #[cfg(target_os = "macos")]
 mod macos_images;
 #[cfg(target_os = "macos")]
+pub mod macos_instance;
+#[cfg(target_os = "macos")]
+pub mod macos_login;
+#[cfg(target_os = "macos")]
 pub mod macos_tray;
 #[cfg(not(target_os = "macos"))]
 mod unsupported;

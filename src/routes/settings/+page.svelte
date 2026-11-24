@@ -10,10 +10,12 @@
   import { api } from "$lib/ipc";
   import { closesSettingsWindow } from "$lib/keyboard";
   import { isMac } from "$lib/platform";
-  import type { Settings, UpdateStatus } from "$lib/types";
+  import type { LoginItem, Settings, UpdateStatus } from "$lib/types";
 
   let settings = $state.raw<Settings | null>(null);
   let updateStatus = $state.raw<UpdateStatus | null>(null);
+  // Read from the system each time the window opens (it is destroyed on close).
+  let loginItem = $state.raw<LoginItem | null>(null);
   let error = $state("");
 
   // Icon URLs live as long as this window (it is destroyed on close).
@@ -40,6 +42,10 @@
     api
       .getSettings()
       .then((s) => (settings ??= s))
+      .catch((e) => (error = message(e)));
+    api
+      .getLoginItem()
+      .then((item) => (loginItem = item))
       .catch((e) => (error = message(e)));
     let stopUpdates: (() => void) | null = null;
     api
@@ -78,6 +84,18 @@
     onpause={async (p) => {
       await api.setCapturePaused(p);
       if (settings) settings = { ...settings, capturePaused: p };
+    }}
+    login={{
+      item: loginItem,
+      set: async (enabled) => {
+        try {
+          loginItem = await api.setOpenAtLogin(enabled);
+        } catch (e) {
+          // Show what the system has now, then say what went wrong.
+          loginItem = await api.getLoginItem().catch(() => loginItem);
+          throw e;
+        }
+      },
     }}
     onclear={async () => {
       await api.clearHistory();

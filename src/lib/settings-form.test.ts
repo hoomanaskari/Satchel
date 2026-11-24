@@ -19,6 +19,7 @@ const base: Settings = {
   pasteOnSelect: true,
   linkPreviews: false,
   checkForUpdates: true,
+  openAtLogin: true,
 };
 
 type Ev = Parameters<typeof acceleratorFromEvent>[0];

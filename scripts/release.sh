@@ -93,6 +93,8 @@ plist="$APP/Contents/Info.plist"
   || stop "the build is not the installed Satchel (its identifier is not app.satchel.desktop)."
 [ "$(plutil -extract CFBundleName raw -o - "$plist")" = Satchel ] || stop "the build is not called Satchel."
 [ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$VERSION" ] || stop "the build is not version $VERSION."
+[ "$(plutil -extract LSUIElement raw -o - "$plist" 2>/dev/null)" = true ] \
+  || stop "Satchel.app is not an agent app (LSUIElement): it would show a Dock icon."
 cmp -s "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt" THIRD-PARTY-NOTICES.txt \
   || stop "Satchel.app does not contain the current THIRD-PARTY-NOTICES.txt."
 codesign --verify --deep --strict "$APP"

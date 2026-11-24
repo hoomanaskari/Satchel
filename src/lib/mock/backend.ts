@@ -231,6 +231,8 @@ function defaultSettings(): Settings {
     // On by default, as in the app.
     linkPreviews: true,
     checkForUpdates: true,
+    // Undecided (on) until the first launch registers.
+    openAtLogin: null,
   };
 }
 
@@ -436,7 +438,8 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     get_settings: () => structuredClone(settings),
     save_settings: (a) => {
       const was = settings.linkPreviews;
-      settings = structuredClone(a.settings as Settings);
+      // Like Rust: the form never changes "open at login".
+      settings = { ...structuredClone(a.settings as Settings), openAtLogin: settings.openAtLogin };
       emit("settings-changed", structuredClone(settings));
       if (was && !settings.linkPreviews) {
         // Like Rust: turning previews off deletes the cached ones.
@@ -447,6 +450,13 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     set_capture_paused: (a) => {
       settings = { ...settings, capturePaused: !!a.paused };
       emit("settings-changed", structuredClone(settings));
+    },
+    // A browser is never a login item: shown as on and changeable, like the app in /Applications.
+    get_login_item: () => ({ enabled: settings.openAtLogin ?? true, requiresApproval: false, unavailable: null }),
+    set_open_at_login: (a) => {
+      // Like Rust: stored, not announced.
+      settings = { ...settings, openAtLogin: !!a.enabled };
+      return { enabled: !!a.enabled, requiresApproval: false, unavailable: null };
     },
     hide_shelf: () => undefined,
     // There is no second window in a plain browser; open /settings by hand.

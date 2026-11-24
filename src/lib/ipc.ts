@@ -18,6 +18,7 @@ import type {
   Commands,
   EventName,
   Events,
+  LoginItem,
   Pinboard,
   PinboardId,
   Query,
@@ -121,6 +122,8 @@ export const unpinClip = (clipId: ClipId, pinboardId: PinboardId): Promise<void>
 export const getSettings = (): Promise<Settings> => call("get_settings");
 export const saveSettings = (settings: Settings): Promise<void> => call("save_settings", { settings });
 export const setCapturePaused = (paused: boolean): Promise<void> => call("set_capture_paused", { paused });
+export const getLoginItem = (): Promise<LoginItem> => call("get_login_item");
+export const setOpenAtLogin = (enabled: boolean): Promise<LoginItem> => call("set_open_at_login", { enabled });
 export const hideShelf = (): Promise<void> => call("hide_shelf");
 export const openSettings = (): Promise<void> => call("open_settings");
 export const closeSettings = (): Promise<void> => call("close_settings");
@@ -167,6 +170,8 @@ export const api = {
   getSettings,
   saveSettings,
   setCapturePaused,
+  getLoginItem,
+  setOpenAtLogin,
   hideShelf,
   openSettings,
   closeSettings,

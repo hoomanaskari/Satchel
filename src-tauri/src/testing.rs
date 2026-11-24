@@ -18,6 +18,7 @@ use crate::clipboard::{
 use crate::ctx::{Ctx, Policy, SettingsWindowControl, ShelfControl};
 use crate::error::CmdResult;
 use crate::events::{ChangeReason, EventSink};
+use crate::login_item::{LoginItems, Status, Unavailable};
 use crate::platform::{AppCatalog, AppInfo, Clock, Desktop, FrontApp};
 use crate::shortcut::ShortcutRegistrar;
 use crate::storage::{ClipStore, SharedStore};
@@ -34,6 +35,7 @@ pub fn sample_settings() -> Settings {
         paste_on_select: true,
         link_previews: false,
         check_for_updates: false,
+        open_at_login: None,
     }
 }
 
@@ -255,7 +257,16 @@ impl ClipStore for FakeStore {
     }
     fn save_settings(&mut self, settings: &Settings) -> Result<()> {
         self.check()?;
-        self.settings = Some(settings.clone());
+        // Like the real store: "open at login" has its own write.
+        let kept = self.settings.as_ref().and_then(|s| s.open_at_login);
+        self.settings = Some(Settings { open_at_login: kept, ..settings.clone() });
+        Ok(())
+    }
+    fn save_open_at_login(&mut self, value: Option<bool>) -> Result<()> {
+        self.check()?;
+        let mut settings = self.settings.clone().unwrap_or_default();
+        settings.open_at_login = value;
+        self.settings = Some(settings);
         Ok(())
     }
     fn window_state(&self, name: &str) -> Result<Option<String>> {
@@ -561,7 +572,62 @@ impl AppCatalog for FakeApps {
     }
 }
 
+/// Login items: starts offered and not registered.
+pub struct FakeLoginItems {
+    status: Mutex<Status>,
+    unavailable: Mutex<Option<Unavailable>>,
+    fail: AtomicBool,
+    calls: Mutex<Vec<bool>>,
+}
+
+impl Default for FakeLoginItems {
+    fn default() -> Self {
+        Self {
+            status: Mutex::new(Status::NotRegistered),
+            unavailable: Mutex::new(None),
+            fail: AtomicBool::new(false),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl FakeLoginItems {
+    pub fn set_status(&self, status: Status) {
+        *self.status.lock().unwrap() = status;
+    }
+    pub fn set_unavailable(&self, why: Option<Unavailable>) {
+        *self.unavailable.lock().unwrap() = why;
+    }
+    /// Every later register or unregister fails.
+    pub fn fail(&self) {
+        self.fail.store(true, Ordering::SeqCst);
+    }
+    /// What was asked: true to register, false to unregister.
+    pub fn calls(&self) -> Vec<bool> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl LoginItems for FakeLoginItems {
+    fn unavailable(&self) -> Option<Unavailable> {
+        *self.unavailable.lock().unwrap()
+    }
+    fn status(&self) -> Option<Status> {
+        Some(*self.status.lock().unwrap())
+    }
+    fn set(&self, on: bool) -> std::result::Result<(), ()> {
+        self.calls.lock().unwrap().push(on);
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(());
+        }
+        self.set_status(if on { Status::Enabled } else { Status::NotRegistered });
+        Ok(())
+    }
+}
+
 pub struct Harness {
+    /// "Open at login".
+    pub login: Arc<FakeLoginItems>,
     pub ctx: Arc<Ctx>,
     pub log: Arc<Log>,
     pub board: Arc<FakeBoard>,
@@ -609,6 +675,7 @@ impl Harness {
         });
         let shortcuts = Arc::new(FakeShortcuts { log: log.clone(), refuse: Mutex::new(None) });
         let clips_saved = Arc::new(AtomicUsize::new(0));
+        let login = Arc::new(FakeLoginItems::default());
         let ctx = Arc::new(Ctx {
             store: SharedStore::new(store),
             settings: RwLock::new(sample_settings()),
@@ -631,8 +698,9 @@ impl Harness {
             paste_lock: Mutex::new(()),
             accessibility_prompted: AtomicBool::new(false),
             link_wake: Default::default(),
+            login_items: login.clone(),
         });
-        Self { ctx, log, board, desktop, policy, clock, shortcuts, clips_saved }
+        Self { login, ctx, log, board, desktop, policy, clock, shortcuts, clips_saved }
     }
 
     pub fn source(&self) -> FakeSource {

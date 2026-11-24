@@ -26,6 +26,7 @@ const settings: Settings = {
   pasteOnSelect: true,
   linkPreviews: false,
   checkForUpdates: true,
+  openAtLogin: null,
 };
 
 afterEach(() => ipc.setTransport(null));
@@ -49,6 +50,8 @@ describe("commands", () => {
     ["getSettings", () => ipc.getSettings(), "get_settings", undefined],
     ["saveSettings", () => ipc.saveSettings(settings), "save_settings", { settings }],
     ["setCapturePaused", () => ipc.setCapturePaused(true), "set_capture_paused", { paused: true }],
+    ["getLoginItem", () => ipc.getLoginItem(), "get_login_item", undefined],
+    ["setOpenAtLogin", () => ipc.setOpenAtLogin(false), "set_open_at_login", { enabled: false }],
     ["hideShelf", () => ipc.hideShelf(), "hide_shelf", undefined],
     ["openSettings", () => ipc.openSettings(), "open_settings", undefined],
     ["closeSettings", () => ipc.closeSettings(), "close_settings", undefined],

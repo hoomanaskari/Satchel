@@ -20,6 +20,8 @@ const COMMANDS: &[&str] = &[
     "get_settings",
     "save_settings",
     "set_capture_paused",
+    "get_login_item",
+    "set_open_at_login",
     "hide_shelf",
     "open_settings",
     "close_settings",

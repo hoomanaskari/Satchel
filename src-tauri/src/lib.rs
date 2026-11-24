@@ -9,7 +9,9 @@ mod commands;
 mod ctx;
 mod error;
 mod events;
+mod instance;
 mod link_preview;
+mod login_item;
 mod notices;
 mod paste;
 mod platform;
@@ -163,9 +165,12 @@ fn start_with_variant_defaults(store: &mut Store) {
 }
 
 fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
+    // Before anything else: a later copy hands over to the running one and
+    // leaves without a tray icon, a shortcut or the store.
+    if !instance::claim(&app.config().identifier) {
+        std::process::exit(0);
+    }
     app_identity::init(&app.config().identifier, &app.package_info().name);
-    #[cfg(target_os = "macos")]
-    app.set_activation_policy(tauri::ActivationPolicy::Accessory)?;
 
     let store = open_store(app);
     let settings = store.settings().unwrap_or_default();
@@ -190,6 +195,7 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         paste_lock: Mutex::new(()),
         accessibility_prompted: AtomicBool::new(false),
         link_wake: Default::default(),
+        login_items: Arc::new(login_item::SystemLoginItems),
     });
     app.manage(ctx.clone());
 
@@ -199,6 +205,7 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
     }
     app.manage(shelf);
     Shelf::install_blur_handler(app);
+    instance::listen(app);
 
     let supported = updates_supported(app.config());
     let updates = updates::Updates::new(
@@ -226,6 +233,12 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         Arc::new(link_preview::http::HttpFetcher::new()),
         Arc::new(link_preview::SystemImages),
     )?;
+    // Registers once when undecided, otherwise adopts the system's state.
+    // Off the main thread: ServiceManagement can take a moment.
+    let login_ctx = ctx.clone();
+    std::thread::Builder::new()
+        .name("satchel-login-item".into())
+        .spawn(move || login_item::launch(&login_ctx))?;
     watcher::spawn(ctx)?;
     // Installed Satchel only; asleep between checks, and until turned on
     // while "Check for updates automatically" is off.
@@ -247,7 +260,8 @@ pub fn run() {
     if updates_supported(context.config()) {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
-    builder
+    #[allow(unused_mut)]
+    let mut app = builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -278,6 +292,8 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::set_capture_paused,
+            commands::get_login_item,
+            commands::set_open_at_login,
             commands::hide_shelf,
             commands::open_settings,
             commands::close_settings,
@@ -292,13 +308,24 @@ pub fn run() {
         ])
         .setup(|app| setup(app.handle()))
         .build(context)
-        .expect("error while building the app")
-        .run(|_app, event| {
-            // An accessory app with no visible window must keep running.
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
-                api.prevent_exit();
-            }
-        });
+        .expect("error while building the app");
+    // Satchel is an agent app: no Dock icon, not in the app switcher.
+    // `LSUIElement` in the bundle's Info.plist (`src-tauri/Info.plist`) makes
+    // macOS launch it as one, and keeps it one when it is opened again while
+    // running. tao still applies its own activation policy (Regular unless
+    // told otherwise) when launching finishes, before `setup` runs, so it is
+    // told here, before the event loop starts. This alone also covers the
+    // unbundled binary `pnpm tauri dev` runs.
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    app.run(|app, event| match event {
+        // An accessory app with no visible window must keep running.
+        tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+        // Opened again while running (Finder, Spotlight, `open -a`).
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => instance::show_shelf(app),
+        _ => {}
+    });
 }
 
 #[cfg(test)]
@@ -324,6 +351,22 @@ mod tests {
         assert!(!updates_supported(&config(merged)), "a Dev identifier never updates");
         prod["plugins"]["updater"]["endpoints"] = serde_json::json!([]);
         assert!(!updates_supported(&config(prod)));
+    }
+
+    #[test]
+    fn both_variants_are_agent_apps() {
+        // Satchel and Satchel Dev (whose overlay does not touch `bundle`)
+        // merge `Info.plist` into their bundles; it must say LSUIElement.
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(format!("{dir}/tauri.conf.json")).unwrap()).unwrap();
+        let name = config["bundle"]["macOS"]["infoPlist"].as_str().expect("bundle.macOS.infoPlist is set");
+        let dev: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(format!("{dir}/tauri.dev.conf.json")).unwrap()).unwrap();
+        assert!(dev["bundle"].get("macOS").is_none(), "Satchel Dev keeps the same Info.plist");
+        let plist = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
+        let compact: String = plist.split_whitespace().collect();
+        assert!(compact.contains("<key>LSUIElement</key><true/>"), "LSUIElement must be true");
     }
 
     #[test]

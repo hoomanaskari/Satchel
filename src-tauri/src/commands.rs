@@ -147,7 +147,15 @@ pub mod api {
             let _ = shortcut::swap(ctx.shortcuts.as_ref(), &new.shelf_shortcut, &old.shelf_shortcut);
             return Err(store_error(e));
         }
-        ctx.set_settings(new.clone());
+        // "Open at login" is owned by its own command and the system's login
+        // items (the store's `save_settings` leaves it alone too): a form
+        // opened before a change there must not undo it.
+        let new = {
+            let mut current = ctx.settings.write().unwrap_or_else(|p| p.into_inner());
+            let new = Settings { open_at_login: current.open_at_login, ..new };
+            *current = new.clone();
+            new
+        };
         ctx.events.settings_changed(&new);
         let removed = ctx.store.lock().prune(&new, ctx.clock.now()).unwrap_or(0);
         if removed > 0 {
@@ -334,6 +342,18 @@ pub fn get_settings(ctx: Ctxs<'_>) -> Settings {
 #[tauri::command(async)]
 pub fn save_settings(ctx: Ctxs<'_>, settings: Settings) -> CmdResult<()> {
     api::save_settings(&ctx, settings)
+}
+
+/// "Open at login" as the system has it (also stored as the setting).
+#[tauri::command(async)]
+pub fn get_login_item(ctx: Ctxs<'_>) -> crate::login_item::LoginItem {
+    crate::login_item::get(&ctx)
+}
+
+/// Adds Satchel to the login items, or removes it.
+#[tauri::command(async)]
+pub fn set_open_at_login(ctx: Ctxs<'_>, enabled: bool) -> CmdResult<crate::login_item::LoginItem> {
+    crate::login_item::set(&ctx, enabled)
 }
 
 #[tauri::command(async)]
