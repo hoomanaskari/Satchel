@@ -28,9 +28,11 @@ export interface KeyContext {
 export type KeyAction =
   | { type: "move"; delta: -1 | 1; extend: boolean }
   | { type: "edge"; end: boolean }
-  | { type: "paste"; plain: boolean }
-  | { type: "pasteNth"; n: number; plain: boolean }
-  | { type: "copy"; plain: boolean }
+  // `alternate`: Shift was held, asking for the other paste format (plain
+  // text, or formatted text when plain text is the default).
+  | { type: "paste"; alternate: boolean }
+  | { type: "pasteNth"; n: number; alternate: boolean }
+  | { type: "copy"; alternate: boolean }
   | { type: "pin" }
   | { type: "delete" }
   | { type: "selectAll" }
@@ -62,12 +64,12 @@ export function mapKey(e: KeyInput, ctx: KeyContext): KeyAction | null {
 
   if (mod) {
     const n = digit(e);
-    if (n !== null) return n >= 1 ? { type: "pasteNth", n, plain: e.shiftKey } : null;
+    if (n !== null) return n >= 1 ? { type: "pasteNth", n, alternate: e.shiftKey } : null;
     if (e.key === "Backspace" || e.key === "Delete") return editingText ? null : { type: "delete" };
     if (e.key === "," || e.code === "Comma") return e.shiftKey ? null : { type: "settings" };
     switch (letter(e)) {
       case "c":
-        return ctx.hasTextSelection ? null : { type: "copy", plain: e.shiftKey };
+        return ctx.hasTextSelection ? null : { type: "copy", alternate: e.shiftKey };
       case "p":
         return e.shiftKey ? null : { type: "pin" };
       case "a":
@@ -84,7 +86,7 @@ export function mapKey(e: KeyInput, ctx: KeyContext): KeyAction | null {
     case "Escape":
       return ctx.previewOpen ? { type: "closePreview" } : { type: "close" };
     case "Enter":
-      return { type: "paste", plain: e.shiftKey };
+      return { type: "paste", alternate: e.shiftKey };
     case "ArrowLeft":
     case "ArrowRight":
       if (e.shiftKey && editingText) return null;

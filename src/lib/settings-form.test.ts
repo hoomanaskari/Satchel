@@ -17,6 +17,7 @@ const base: Settings = {
   captureImages: true,
   shelfShortcut: "CommandOrControl+Shift+V",
   pasteOnSelect: true,
+  pastePlainText: false,
   linkPreviews: false,
   checkForUpdates: true,
   openAtLogin: true,

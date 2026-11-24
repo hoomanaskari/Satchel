@@ -228,6 +228,7 @@ function defaultSettings(): Settings {
     captureImages: true,
     shelfShortcut: "CommandOrControl+Shift+V",
     pasteOnSelect: true,
+    pastePlainText: false,
     // On by default, as in the app.
     linkPreviews: true,
     checkForUpdates: true,

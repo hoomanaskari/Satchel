@@ -88,6 +88,13 @@ export interface Settings {
   shelfShortcut: string;
   /** Paste into the frontmost app on selection instead of only copying. */
   pasteOnSelect: boolean;
+  /**
+   * What a normal paste (Return, double-click, the main button) does with a
+   * text clip's formatting: false keeps it (the default), true pastes plain
+   * text. The other paste action (Shift+Return, the second button) does the
+   * opposite.
+   */
+  pastePlainText: boolean;
   /** Fetch the title and image of copied web links (the only use of the network). On by default. */
   linkPreviews: boolean;
   /**
@@ -158,9 +165,9 @@ export interface Commands {
   get_clip_thumbnail: { args: { id: ClipId }; ret: ArrayBuffer | Uint8Array | number[] };
   /** A link clip's preview image or site icon as raw PNG bytes; rejects with "not found". */
   get_link_image: { args: { id: ClipId }; ret: ArrayBuffer | Uint8Array | number[] };
-  paste_clip: { args: { id: ClipId; plainText: boolean }; ret: void };
-  paste_clips: { args: { ids: ClipId[]; plainText: boolean }; ret: void };
-  copy_clip: { args: { id: ClipId; plainText: boolean }; ret: void };
+  paste_clip: { args: { id: ClipId; alternate: boolean }; ret: void };
+  paste_clips: { args: { ids: ClipId[]; alternate: boolean }; ret: void };
+  copy_clip: { args: { id: ClipId; alternate: boolean }; ret: void };
   delete_clip: { args: { id: ClipId }; ret: boolean };
   set_clip_title: { args: { id: ClipId; title: string | null }; ret: void };
   clear_history: { args: undefined; ret: number };

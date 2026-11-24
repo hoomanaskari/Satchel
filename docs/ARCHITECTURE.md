@@ -112,10 +112,25 @@ pasteboard, nothing is read before the privacy gate.
 
 | Kind | Captured from | Stored | Pastes back as |
 |---|---|---|---|
-| Text | `public.utf8-plain-text`, with `public.html` and `public.rtf` when present (browsers write HTML; TextEdit, Notes, Pages, Mail, Xcode, Terminal write RTF) | text + HTML + RTF (each ≤ `MAX_TEXT_BYTES`; an oversized flavor is dropped, the text kept). Copying the same text again with formatting replaces the stored formatting | text + HTML + RTF; "Paste as Plain Text" writes the text only |
+| Text | `public.utf8-plain-text`, with `public.html` and `public.rtf` when present (browsers write HTML; TextEdit, Notes, Pages, Mail, Xcode, Terminal write RTF) | text + HTML + RTF (each ≤ `MAX_TEXT_BYTES`; an oversized flavor is dropped, the text kept). Copying the same text again with formatting replaces the stored formatting | text + HTML + RTF; a plain-text paste writes the text only (see "Paste formats" below) |
 | Links, Code, Colors | text classified by `classify_text` (a whole-text URL; code heuristics; `#RGB[A]`, `#RRGGBB[AA]`, `rgb()/rgba()/hsl()/hsla()`). Colors also from an NSColor on the pasteboard (color wells, the color panel, pickers), kept as sRGB `#RRGGBB[AA]` | as Text; colors previewed as normalized hex | their text (and formatting, as Text) |
-| Images | PNG as is; TIFF, JPEG, HEIC/HEIF, WebP, GIF (first frame) and BMP converted to PNG. Screenshots to the clipboard, Preview, Photos, Pages/Keynote image copies, browsers' "Copy Image" | full-size PNG (≤ `MAX_IMAGE_BYTES` = 64 MB and ≤ 100 MP) + a 320 px thumbnail made once at capture; preview `W × H` | the full PNG (never the thumbnail), plus a TIFF for older apps when the PNG is ≤ 16 MB; "plain" is ignored |
-| Files | `public.file-url` items whose files exist (Finder: one or many files, folders) | absolute paths (≤ 1000, each ≤ 4096 bytes) | file URLs (Finder pastes the files, Mail and chat apps attach them); "Paste as Plain Text" writes the paths, one per line |
+| Images | PNG as is; TIFF, JPEG, HEIC/HEIF, WebP, GIF (first frame) and BMP converted to PNG. Screenshots to the clipboard, Preview, Photos, Pages/Keynote image copies, browsers' "Copy Image" | full-size PNG (≤ `MAX_IMAGE_BYTES` = 64 MB and ≤ 100 MP) + a 320 px thumbnail made once at capture; preview `W × H` | the full PNG (never the thumbnail), plus a TIFF for older apps when the PNG is ≤ 16 MB; both paste actions write the same |
+| Files | `public.file-url` items whose files exist (Finder: one or many files, folders) | absolute paths (≤ 1000, each ≤ 4096 bytes) | file URLs (Finder pastes the files, Mail and chat apps attach them); the other paste action (Shift+Return) writes the paths, one per line, whatever the "Paste text as" setting |
+
+**Paste formats.** Every paste or copy is the normal action (Return,
+double-click, the main button, Cmd/Ctrl+1…9, Cmd/Ctrl+C, the clip menu's
+first item, a multi-paste) or the other one (Shift+Return, the second button
+and menu item, the Shift variants). The front end only says which
+(`alternate`); Rust decides per clip in `paste::plain_for` from the "Paste
+text as" setting (`Settings::paste_plain_text`, off = formatted by default):
+text clips (text, links, code, colors) take that format, and the other one
+for the other action; files paste as files, and as their paths for the other
+action; images are the same either way. A plain-text write puts only
+`public.utf8-plain-text` (AppKit also lists its legacy alias
+`NSStringPboardType`) plus Satchel's two marker types on the pasteboard. The
+target app styles plain text itself: a rich editor (TextEdit, Notes, Pages)
+gives it the style at the insertion point, so plain text pasted right after
+bold text comes out bold there, exactly as typing would.
 
 Precedence when one change carries several representations:
 
@@ -164,11 +179,11 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `get_clip_text` | `id` | `string \| null` (full text, for preview/edit) |
 | `get_clip_thumbnail` | `id` | raw PNG bytes (`ArrayBuffer`) |
 | `get_link_image` | `id` | raw PNG bytes of a link clip's cached preview image or site icon (`ArrayBuffer`); `not found` when it has none. Never touches the network |
-| `paste_clip` | `id, plainText: boolean` | `void` — hides the shelf, writes the clipboard, pastes into the previously frontmost app, bumps the clip |
-| `paste_clips` | `ids: number[], plainText: boolean` | `void` — pastes several clips in order (multi-select / paste stack) |
+| `paste_clip` | `id, alternate: boolean` | `void` — hides the shelf, writes the clipboard, pastes into the previously frontmost app, bumps the clip |
+| `paste_clips` | `ids: number[], alternate: boolean` | `void` — pastes several clips in order (multi-select / paste stack) |
 | | | Without the Accessibility permission both copy instead, leave the shelf up and fail with `accessibility-permission-required: …` so the shelf can explain |
 | `open_accessibility_settings` | — | `void` — hides the shelf and opens System Settings > Privacy & Security > Accessibility |
-| `copy_clip` | `id, plainText: boolean` | `void` — writes the clipboard without pasting |
+| `copy_clip` | `id, alternate: boolean` | `void` — writes the clipboard without pasting |
 | `delete_clip` | `id` | `boolean` |
 | `set_clip_title` | `id, title: string \| null` | `void` |
 | `clear_history` | — | `number` (removed count) |
@@ -397,8 +412,9 @@ Events emitted by Rust:
 - Opens with the global shortcut (default `CommandOrControl+Shift+V`).
 - Search field focused on open; typing filters; scope buttons filter by kind;
   tabs switch between History and each pinboard.
-- Left/Right arrows move the selection; Return pastes; Shift+Return pastes as
-  plain text; Cmd/Ctrl+1…9 pastes the nth visible clip; Cmd/Ctrl+C copies
+- Left/Right arrows move the selection; Return pastes; Shift+Return pastes in
+  the other text format (plain text, or formatted when "Paste text as" is
+  Plain text; see "Paste formats"); Cmd/Ctrl+1…9 pastes the nth visible clip; Cmd/Ctrl+C copies
   without pasting; Cmd/Ctrl+P pins; Cmd/Ctrl+Backspace deletes; Space toggles
   a larger preview; Shift/Cmd-click multi-selects; Escape closes.
 - Cards show the source app (its real icon and name), kind, relative time,
@@ -419,10 +435,11 @@ Events emitted by Rust:
   layout shift); with no source app or no icon (uninstalled, other
   platforms) the card keeps the coloured letter tile.
 - Layout: one top bar over the card row, no footer. Left to right: search,
-  pinboard tabs, kind filters, the notice, the item count, "Paste as Plain
-  Text" and "Paste" (primary), and the More menu. Tab order follows it, then
-  the selected card. The buttons say "Copy" when paste-on-select is off and
-  "Paste N Clips" for a pasted multi-selection.
+  pinboard tabs, kind filters, the notice, the item count, the other paste
+  action ("Paste as Plain Text", or "Paste with Formatting" when "Paste text
+  as" is Plain text) and "Paste" (primary), and the More menu. Tab order
+  follows it, then the selected card. The buttons say "Copy" when
+  paste-on-select is off and "Paste N Clips" for a pasted multi-selection.
 - The notice (role="alert", in place of the item count) appears only when
   something needs attention: an action failed, or a copy was too large to
   keep (both cleared by the next selection change); the missing
@@ -434,7 +451,7 @@ Events emitted by Rust:
   not narrated: the cards and the buttons already say it.
 - Narrow screens: the bar never wraps. Search, tabs and filters shrink (tabs
   and filters scroll) to their minimums; the count hides at ≤1180 px of bar,
-  "… as Plain Text" becomes "Plain Text" at ≤1000 px, and that button leaves
+  "… as Plain Text" becomes "Plain Text" ("… with Formatting" becomes "Formatted") at ≤1000 px, and that button leaves
   the bar at ≤860 px (still in the clip menu and on Shift+Return).
 
 ## Link previews

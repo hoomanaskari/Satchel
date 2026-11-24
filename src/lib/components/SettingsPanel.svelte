@@ -90,6 +90,7 @@
         draft.retentionDays !== settings.retentionDays ||
         draft.captureImages !== settings.captureImages ||
         draft.pasteOnSelect !== settings.pasteOnSelect ||
+        draft.pastePlainText !== settings.pastePlainText ||
         draft.linkPreviews !== settings.linkPreviews ||
         draft.checkForUpdates !== settings.checkForUpdates ||
         draft.shelfShortcut !== settings.shelfShortcut ||
@@ -225,6 +226,11 @@
   const removeLabel = (row: ExcludedRow) =>
     `Stop excluding ${rowLabel(row)}` + (row.ids.length > 1 ? ` (${row.ids.length} identifiers)` : row.name ? ` (${row.ids[0]})` : "");
 
+  function pasteFormat(e: Event) {
+    if (!draft) return;
+    draft.pastePlainText = (e.currentTarget as HTMLSelectElement).value === "plain";
+  }
+
   function retentionValue(e: Event) {
     if (!draft) return;
     const v = (e.currentTarget as HTMLSelectElement).value;
@@ -343,6 +349,14 @@
           Paste into the active app
         </label>
         <p class="muted">When off, choosing a clip only copies it.</p>
+        <label class="row">
+          <span>Paste text as</span>
+          <select value={draft.pastePlainText ? "plain" : "formatted"} aria-describedby="paste-text-hint" onchange={pasteFormat}>
+            <option value="formatted">Formatted text</option>
+            <option value="plain">Plain text</option>
+          </select>
+        </label>
+        <p class="muted" id="paste-text-hint">Shift-Return and the second paste button use the other one.</p>
         <label class="check">
           <input type="checkbox" bind:checked={draft.linkPreviews} aria-describedby="link-previews-hint" />
           Show link previews

@@ -665,6 +665,7 @@ impl Store {
                 ("capture_paused", Value::Integer(v)) => s.capture_paused = v != 0,
                 ("capture_images", Value::Integer(v)) => s.capture_images = v != 0,
                 ("paste_on_select", Value::Integer(v)) => s.paste_on_select = v != 0,
+                ("paste_plain_text", Value::Integer(v)) => s.paste_plain_text = v != 0,
                 ("link_previews", Value::Integer(v)) => s.link_previews = v != 0,
                 ("check_for_updates", Value::Integer(v)) => s.check_for_updates = v != 0,
                 ("open_at_login", Value::Integer(v)) => s.open_at_login = Some(v != 0),
@@ -705,6 +706,7 @@ impl Store {
             put.execute(params!["capture_paused", settings.capture_paused])?;
             put.execute(params!["capture_images", settings.capture_images])?;
             put.execute(params!["paste_on_select", settings.paste_on_select])?;
+            put.execute(params!["paste_plain_text", settings.paste_plain_text])?;
             put.execute(params!["link_previews", settings.link_previews])?;
             put.execute(params!["check_for_updates", settings.check_for_updates])?;
             put.execute(params!["shelf_shortcut", settings.shelf_shortcut])?;

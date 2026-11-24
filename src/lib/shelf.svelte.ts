@@ -197,15 +197,41 @@ export class Shelf {
     return this.settings?.pasteOnSelect ?? true;
   }
 
+  /** True when a normal paste puts text clips down as plain text ("Paste text as"). */
+  get pastePlainText(): boolean {
+    return this.settings?.pastePlainText ?? false;
+  }
+
   /**
    * Labels of the paste actions (top-bar buttons, clip menu). They say
    * "Copy" when selecting only copies, and count a multi-selection when it
    * is pasted (copying takes the focused clip only, so it is not counted).
+   * The other action (`alternate`, Shift+Return) pastes text in the format
+   * the "Paste text as" setting does not choose; `alternateShort` is its
+   * label in a narrow window.
    */
-  get pasteLabels(): { paste: string; plain: string } {
+  get pasteLabels(): { paste: string; alternate: string; alternateShort: string } {
     const verb = this.pasteOnSelect ? "Paste" : "Copy";
     const n = this.selection.ids.length;
-    return { paste: this.pasteOnSelect && n > 1 ? `Paste ${n} Clips` : verb, plain: `${verb} as Plain Text` };
+    const paste = this.pasteOnSelect && n > 1 ? `Paste ${n} Clips` : verb;
+    return this.pastePlainText
+      ? { paste, alternate: `${verb} with Formatting`, alternateShort: "Formatted" }
+      : { paste, alternate: `${verb} as Plain Text`, alternateShort: "Plain Text" };
+  }
+
+  /**
+   * How a paste or copy of `ids` is announced: as plain text, or with the
+   * formatting the other action asked for. Only text clips have a format
+   * (images and files are announced as they are).
+   */
+  private formatSuffix(ids: ClipId[], alternate: boolean): string {
+    const text = ids.some((id) => {
+      const kind = this.clips.find((c) => c.id === id)?.kind;
+      return kind !== "image" && kind !== "file";
+    });
+    if (!text) return "";
+    const plain = alternate !== this.pastePlainText;
+    return plain ? " as plain text" : alternate ? " with formatting" : "";
   }
 
   // ---- lifecycle ----
@@ -391,23 +417,25 @@ export class Shelf {
     return sel.ordered(this.selection, this.order);
   }
 
-  async paste(plain: boolean): Promise<void> {
+  /** Pastes (or copies) the selection; `alternate` asks for the other text format. */
+  async paste(alternate: boolean): Promise<void> {
     await this.flushSearch();
     const ids = this.selectedIds();
     if (ids.length === 0) return;
     try {
       if (!this.pasteOnSelect) {
         // No multi-copy command exists; the focused clip is copied.
-        await this.api.copyClip(this.selection.focus ?? ids[0], plain);
+        await this.api.copyClip(this.selection.focus ?? ids[0], alternate);
         await this.api.hideShelf();
       } else if (ids.length > 1) {
-        await this.api.pasteClips(ids, plain);
+        await this.api.pasteClips(ids, alternate);
       } else {
-        await this.api.pasteClip(ids[0], plain);
+        await this.api.pasteClip(ids[0], alternate);
       }
       // Seen only where the window stays up (browser development); Rust hides the shelf.
       const what = !this.pasteOnSelect ? "Copied" : ids.length > 1 ? `Pasted ${ids.length} clips` : "Pasted";
-      this.say(plain ? `${what} as plain text` : what);
+      const copied = !this.pasteOnSelect ? [this.selection.focus ?? ids[0]] : ids;
+      this.say(what + this.formatSuffix(copied, alternate));
       this.needsPastePermission = false;
       this.afterHide();
     } catch (e) {
@@ -429,19 +457,19 @@ export class Shelf {
     this.afterHide();
   }
 
-  async pasteNth(n: number, plain: boolean): Promise<void> {
+  async pasteNth(n: number, alternate: boolean): Promise<void> {
     const clip = this.clips[this.firstVisible + n - 1];
     if (!clip) return;
     this.setSelection(sel.single(clip.id));
-    await this.paste(plain);
+    await this.paste(alternate);
   }
 
-  async copy(plain: boolean): Promise<void> {
+  async copy(alternate: boolean): Promise<void> {
     const id = this.selection.focus;
     if (id == null) return;
     await this.attempt(async () => {
-      await this.api.copyClip(id, plain);
-      this.say("Copied to the clipboard");
+      await this.api.copyClip(id, alternate);
+      this.say("Copied to the clipboard" + this.formatSuffix([id], alternate));
     });
   }
 
@@ -675,13 +703,13 @@ export class Shelf {
         this.edge(a.end);
         return true;
       case "paste":
-        await this.paste(a.plain);
+        await this.paste(a.alternate);
         return true;
       case "pasteNth":
-        await this.pasteNth(a.n, a.plain);
+        await this.pasteNth(a.n, a.alternate);
         return true;
       case "copy":
-        await this.copy(a.plain);
+        await this.copy(a.alternate);
         return true;
       case "pin":
         await this.togglePin();

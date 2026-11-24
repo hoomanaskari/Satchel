@@ -800,6 +800,7 @@ fn settings_default_until_saved_then_round_trip() {
         capture_images: false,
         shelf_shortcut: "Alt+Space".into(),
         paste_on_select: false,
+        paste_plain_text: true,
         link_previews: true,
         check_for_updates: false,
         open_at_login: None,
@@ -814,6 +815,17 @@ fn settings_default_until_saved_then_round_trip() {
     };
     s.save_settings(&empty_list).unwrap();
     assert_eq!(s.settings().unwrap(), empty_list);
+}
+
+#[test]
+fn text_pastes_formatted_by_default_and_plain_text_round_trips() {
+    assert!(!Settings::default().paste_plain_text);
+    let mut s = store();
+    s.save_settings(&Settings { paste_plain_text: true, ..Settings::default() }).unwrap();
+    assert!(s.settings().unwrap().paste_plain_text);
+    s.save_settings(&Settings { paste_plain_text: false, ..Settings::default() }).unwrap();
+    assert!(!s.settings().unwrap().paste_plain_text);
+    // Settings saved without the field (Satchel 0.1.3 and earlier): see store_file.rs.
 }
 
 #[test]

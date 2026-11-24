@@ -706,6 +706,32 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_writes_only_plain_text_and_markers() {
+        // What "Paste as Plain Text" builds for a rich clip.
+        let content = satchel_core::ClipContent {
+            id: 1,
+            kind: ClipKind::Text,
+            text: Some("bold".into()),
+            html: Some("<b>bold</b>".into()),
+            rtf: Some(b"{\\rtf1 \\b bold}".to_vec()),
+            image_png: None,
+            file_paths: vec![],
+        };
+        let b = Board::new();
+        write_to(&b.0, &crate::clipboard::write_request(&content, true).unwrap()).unwrap();
+        // (`NSStringPboardType` is AppKit's legacy name for the same string.)
+        let allowed = [UTI_TEXT, "NSStringPboardType", SELF_MARKER_TYPE, SOURCE_MARKER_TYPE];
+        let types = b.types();
+        assert!(types.contains(&UTI_TEXT.to_string()), "{types:?}");
+        assert!(types.iter().all(|t| allowed.contains(&t.as_str())), "{types:?}");
+        // And the formatted write carries both rich flavors.
+        let b = Board::new();
+        write_to(&b.0, &crate::clipboard::write_request(&content, false).unwrap()).unwrap();
+        let types = b.types();
+        assert!(types.contains(&"public.html".to_string()) && types.contains(&"public.rtf".to_string()), "{types:?}");
+    }
+
+    #[test]
     fn written_clips_read_back_identically() {
         let dir = std::env::temp_dir().join(format!("satchel-rt-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("folder")).unwrap();

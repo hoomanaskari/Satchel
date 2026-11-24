@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use satchel_core::ClipId;
+use satchel_core::{ClipId, ClipKind};
 
 use crate::clipboard::{WriteRequest, write_request};
 use crate::ctx::Ctx;
@@ -21,7 +21,23 @@ pub const SETTLE: Duration = Duration::from_millis(40);
 /// clipboard before it is overwritten.
 pub const BETWEEN_PASTES: Duration = Duration::from_millis(150);
 
-fn load(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<Vec<(ClipId, WriteRequest)>> {
+/// Whether a clip of `kind` is written as plain text (see `write_request`).
+///
+/// Every paste and copy is either the normal one (Return, double-click, the
+/// main button, Cmd+1-9, Cmd+C) or the other one (`alternate`: Shift+Return,
+/// the second button, the Shift variants). Text clips (text, links, code,
+/// colors) paste in the format the "Paste text as" setting chooses, and in
+/// the other format for the other action. Files paste as files, and as their
+/// paths in text for the other action. Images have one format.
+pub fn plain_for(kind: ClipKind, alternate: bool, plain_text_by_default: bool) -> bool {
+    match kind {
+        ClipKind::Text | ClipKind::Link | ClipKind::Code | ClipKind::Color => alternate != plain_text_by_default,
+        ClipKind::File | ClipKind::Image => alternate,
+    }
+}
+
+fn load(ctx: &Ctx, ids: &[ClipId], alternate: bool) -> CmdResult<Vec<(ClipId, WriteRequest)>> {
+    let plain_text_by_default = ctx.settings().paste_plain_text;
     let store = ctx.store.lock();
     ids.iter()
         .map(|&id| {
@@ -29,6 +45,7 @@ fn load(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<Vec<(ClipId, WriteR
                 .content(id)
                 .map_err(error::store_error)?
                 .ok_or_else(|| error::NOT_FOUND.to_string())?;
+            let plain = plain_for(content.kind, alternate, plain_text_by_default);
             Ok((id, write_request(&content, plain)?))
         })
         .collect()
@@ -66,8 +83,8 @@ pub fn combine_for_copy(requests: &[(ClipId, WriteRequest)]) -> Option<WriteRequ
 }
 
 /// Copies one clip without pasting.
-pub fn copy_clip(ctx: &Ctx, id: ClipId, plain: bool) -> CmdResult<()> {
-    let requests = load(ctx, &[id], plain)?;
+pub fn copy_clip(ctx: &Ctx, id: ClipId, alternate: bool) -> CmdResult<()> {
+    let requests = load(ctx, &[id], alternate)?;
     write(ctx, &requests[0].1)?;
     bump(ctx, id);
     Ok(())
@@ -109,11 +126,11 @@ pub fn dismiss_shelf(ctx: &Ctx) {
 /// offer the way to grant it. (Hiding first would make the failure silent:
 /// macOS shows its own prompt only once, and never when Satchel is already
 /// listed under Accessibility with a grant that no longer matches the build.)
-pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain: bool) -> CmdResult<()> {
+pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], alternate: bool) -> CmdResult<()> {
     let _one_at_a_time = ctx.paste_lock.lock().unwrap_or_else(|p| p.into_inner());
     // Everything is loaded before anything visible happens, so a bad id
     // leaves the shelf and the clipboard untouched.
-    let requests = load(ctx, ids, plain)?;
+    let requests = load(ctx, ids, alternate)?;
     let target = ctx.previous_app();
 
     let allowed = ctx.desktop.can_post_keystrokes();
@@ -252,11 +269,90 @@ mod tests {
         );
     }
 
+    fn writes(h: &Harness) -> Vec<String> {
+        h.log.entries().into_iter().filter(|e| e.starts_with("write")).collect()
+    }
+
+    fn plain_text_by_default(h: &Harness, on: bool) {
+        h.ctx.set_settings(satchel_core::Settings { paste_plain_text: on, ..h.ctx.settings() });
+    }
+
     #[test]
-    fn plain_paste_drops_html() {
+    fn plain_paste_drops_html_and_rtf_from_every_entry_point() {
+        // Formatted by default: the normal action keeps both rich flavors,
+        // the other one (Shift+Return, second button, Shift+Cmd+C) drops both.
         let h = Harness::new();
-        let id = h.seed(ClipKind::Text, "t");
-        assert!(paste_clips(&h.ctx, &[id], true).is_ok());
+        let a = h.seed_rich("bold");
+        let b = h.seed_rich("also bold");
+        h.log.clear();
+        paste_clips(&h.ctx, &[a], false).unwrap();
+        paste_clips(&h.ctx, &[a], true).unwrap();
+        paste_clips(&h.ctx, &[a, b], true).unwrap();
+        copy_clip(&h.ctx, a, false).unwrap();
+        copy_clip(&h.ctx, a, true).unwrap();
+        assert_eq!(
+            writes(&h),
+            vec![
+                "write text:bold +html +rtf",
+                "write text:bold",
+                "write text:bold",
+                "write text:also bold",
+                "write text:bold +html +rtf",
+                "write text:bold",
+            ]
+        );
+        // Without the keystroke permission a multi-paste copies the joined text.
+        h.desktop.trusted.store(false, Ordering::SeqCst);
+        h.log.clear();
+        assert!(paste_clips(&h.ctx, &[a], true).is_err());
+        assert_eq!(writes(&h), vec!["write text:bold"]);
+    }
+
+    #[test]
+    fn plain_text_by_default_swaps_the_two_actions_for_text_clips() {
+        let h = Harness::new();
+        plain_text_by_default(&h, true);
+        let a = h.seed_rich("bold");
+        let b = h.seed_rich("also bold");
+        h.log.clear();
+        paste_clips(&h.ctx, &[a], false).unwrap();
+        paste_clips(&h.ctx, &[a, b], false).unwrap();
+        copy_clip(&h.ctx, a, false).unwrap();
+        paste_clips(&h.ctx, &[a], true).unwrap();
+        copy_clip(&h.ctx, a, true).unwrap();
+        assert_eq!(
+            writes(&h),
+            vec![
+                "write text:bold",
+                "write text:bold",
+                "write text:also bold",
+                "write text:bold",
+                "write text:bold +html +rtf",
+                "write text:bold +html +rtf",
+            ]
+        );
+    }
+
+    #[test]
+    fn files_and_images_ignore_the_text_setting() {
+        for on in [false, true] {
+            let h = Harness::new();
+            plain_text_by_default(&h, on);
+            let files = h.seed_files(&["/a/b.txt", "/c.png"]);
+            h.log.clear();
+            paste_clips(&h.ctx, &[files], false).unwrap();
+            paste_clips(&h.ctx, &[files], true).unwrap();
+            assert_eq!(writes(&h), vec!["write files:/a/b.txt,/c.png", "write text:/a/b.txt\n/c.png"]);
+        }
+        for alternate in [false, true] {
+            for on in [false, true] {
+                assert!(!plain_for(ClipKind::Image, false, on));
+                assert_eq!(plain_for(ClipKind::File, alternate, on), alternate);
+                for kind in [ClipKind::Text, ClipKind::Link, ClipKind::Code, ClipKind::Color] {
+                    assert_eq!(plain_for(kind, alternate, on), alternate != on, "{kind:?}");
+                }
+            }
+        }
     }
 
     #[test]

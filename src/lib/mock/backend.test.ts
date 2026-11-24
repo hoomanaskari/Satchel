@@ -127,8 +127,8 @@ describe("mock backend: clip commands", () => {
     await m.transport.listen("clips-changed", (p) => events.push(p));
     const rows = await inv<ClipSummary[]>("list_clips", { query: q({ limit: 10 }) });
     const target = rows[5];
-    await inv("paste_clip", { id: target.id, plainText: false });
-    expect(m.log.at(-1)).toEqual({ cmd: "paste_clip", args: { id: target.id, plainText: false } });
+    await inv("paste_clip", { id: target.id, alternate: false });
+    expect(m.log.at(-1)).toEqual({ cmd: "paste_clip", args: { id: target.id, alternate: false } });
     const after = await inv<ClipSummary[]>("list_clips", { query: q({ limit: 1 }) });
     expect(after[0].id).toBe(target.id);
     expect(events).toEqual([{ reason: "bumped", id: target.id }]);

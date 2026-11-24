@@ -39,7 +39,7 @@ describe("startup", () => {
     expect(shelf.selection.ids).toEqual([shelf.clips[0].id]);
     // Nothing to say yet: the top bar's notice is hidden.
     expect(shelf.notice).toBeNull();
-    expect(shelf.pasteLabels).toEqual({ paste: "Paste", plain: "Paste as Plain Text" });
+    expect(shelf.pasteLabels).toEqual({ paste: "Paste", alternate: "Paste as Plain Text", alternateShort: "Plain Text" });
   });
 });
 
@@ -106,7 +106,7 @@ describe("selection", () => {
     expect(shelf.selection.ids).toEqual([a, shelf.clips[1].id, c]);
     // The selection is not narrated; the paste buttons count it instead.
     expect(shelf.notice).toBeNull();
-    expect(shelf.pasteLabels).toEqual({ paste: "Paste 3 Clips", plain: "Paste as Plain Text" });
+    expect(shelf.pasteLabels).toEqual({ paste: "Paste 3 Clips", alternate: "Paste as Plain Text", alternateShort: "Plain Text" });
   });
 
   it("moves with the arrows and jumps to the ends", () => {
@@ -129,7 +129,7 @@ describe("paste and copy", () => {
     const id = shelf.clips[2].id;
     shelf.select(id, "single");
     await shelf.paste(true);
-    expect(lastOf("paste_clip")!.args).toEqual({ id, plainText: true });
+    expect(lastOf("paste_clip")!.args).toEqual({ id, alternate: true });
     expect(shelf.notice).toBeNull();
     expect(shelf.announcement).toBe("Pasted as plain text");
   });
@@ -140,7 +140,7 @@ describe("paste and copy", () => {
     shelf.select(a, "toggle");
     shelf.select(b, "toggle");
     await shelf.paste(false);
-    expect(lastOf("paste_clips")!.args).toEqual({ ids: [a, b, c], plainText: false });
+    expect(lastOf("paste_clips")!.args).toEqual({ ids: [a, b, c], alternate: false });
     expect(shelf.announcement).toBe("Pasted 3 clips");
   });
 
@@ -150,7 +150,7 @@ describe("paste and copy", () => {
     const id = shelf.clips[0].id;
     await shelf.paste(false);
     expect(cmds().slice(-2)).toEqual(["copy_clip", "hide_shelf"]);
-    expect(lastOf("copy_clip")!.args).toEqual({ id, plainText: false });
+    expect(lastOf("copy_clip")!.args).toEqual({ id, alternate: false });
   });
 
   it("labels the paste actions Copy, uncounted, when paste-on-select is off", async () => {
@@ -159,14 +159,49 @@ describe("paste and copy", () => {
     shelf.select(shelf.clips[0].id, "single");
     shelf.select(shelf.clips[1].id, "toggle");
     // Copying takes the focused clip only, so the label must not promise two.
-    expect(shelf.pasteLabels).toEqual({ paste: "Copy", plain: "Copy as Plain Text" });
+    expect(shelf.pasteLabels).toEqual({ paste: "Copy", alternate: "Copy as Plain Text", alternateShort: "Plain Text" });
+  });
+
+  it("with plain text as the default, the other action keeps formatting, in the open shelf", async () => {
+    const text = shelf.clips.find((c) => c.kind === "text")!.id;
+    shelf.select(text, "single");
+    await api.saveSettings({ ...shelf.settings!, pastePlainText: true });
+    await flush();
+    expect(shelf.pasteLabels).toEqual({ paste: "Paste", alternate: "Paste with Formatting", alternateShort: "Formatted" });
+    // The flag says which action was used; Rust picks the format from the setting.
+    await shelf.paste(false);
+    expect(lastOf("paste_clip")!.args).toEqual({ id: text, alternate: false });
+    expect(shelf.announcement).toBe("Pasted as plain text");
+    await shelf.paste(true);
+    expect(lastOf("paste_clip")!.args).toEqual({ id: text, alternate: true });
+    expect(shelf.announcement).toBe("Pasted with formatting");
+    await shelf.copy(false);
+    expect(shelf.announcement).toBe("Copied to the clipboard as plain text");
+
+    await api.saveSettings({ ...shelf.settings!, pasteOnSelect: false });
+    await flush();
+    expect(shelf.pasteLabels).toEqual({ paste: "Copy", alternate: "Copy with Formatting", alternateShort: "Formatted" });
+    await shelf.paste(true);
+    expect(lastOf("copy_clip")!.args).toEqual({ id: text, alternate: true });
+    expect(shelf.announcement).toBe("Copied with formatting");
+
+    await api.saveSettings({ ...shelf.settings!, pasteOnSelect: true, pastePlainText: false });
+    await flush();
+    expect(shelf.pasteLabels.alternate).toBe("Paste as Plain Text");
+  });
+
+  it("does not announce a text format for images and files", async () => {
+    const image = shelf.clips.find((c) => c.kind === "image")!.id;
+    shelf.select(image, "single");
+    await shelf.paste(true);
+    expect(shelf.announcement).toBe("Pasted");
   });
 
   it("Cmd+n pastes the nth clip from the first visible one", async () => {
     shelf.setFirstVisible(3);
     const fifth = shelf.clips[4].id;
     await shelf.pasteNth(2, false);
-    expect(lastOf("paste_clip")!.args).toEqual({ id: fifth, plainText: false });
+    expect(lastOf("paste_clip")!.args).toEqual({ id: fifth, alternate: false });
     const before = mock.log.length;
     await shelf.pasteNth(9, false);
     shelf.setFirstVisible(18);
@@ -192,7 +227,7 @@ describe("paste and copy", () => {
     const id = shelf.clips[1].id;
     shelf.select(id, "single");
     await shelf.paste(false);
-    expect(lastOf("paste_clip")!.args).toEqual({ id, plainText: false });
+    expect(lastOf("paste_clip")!.args).toEqual({ id, alternate: false });
     expect(shelf.needsPastePermission).toBe(true);
     expect(shelf.notice).toEqual({ text: ACCESSIBILITY_NOTICE, tone: "permission" });
     expect(shelf.notice?.text).not.toContain("accessibility-permission-required");
@@ -491,8 +526,8 @@ describe("keyboard dispatch", () => {
     const second = shelf.clips[1].id;
     await shelf.run({ type: "move", delta: 1, extend: false });
     expect(shelf.selection.focus).toBe(second);
-    await shelf.run({ type: "paste", plain: false });
-    expect(lastOf("paste_clip")!.args).toEqual({ id: second, plainText: false });
+    await shelf.run({ type: "paste", alternate: false });
+    expect(lastOf("paste_clip")!.args).toEqual({ id: second, alternate: false });
     await shelf.run({ type: "close" });
     expect(cmds().at(-1)).toBe("hide_shelf");
   });

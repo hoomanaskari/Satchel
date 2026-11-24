@@ -172,7 +172,7 @@
     if (n === 0) return [];
     return [
       { label: labels.paste, hint: "↩", action: () => void shelf.paste(false) },
-      { label: labels.plain, hint: "⇧↩", action: () => void shelf.paste(true) },
+      { label: labels.alternate, hint: "⇧↩", action: () => void shelf.paste(true) },
       { label: "Copy", hint: `${modLabel}C`, action: () => void shelf.copy(false) },
       { label: "Preview", hint: "Space", disabled: !single, action: () => void shelf.togglePreview() },
       { label: "Rename…", disabled: !single, action: () => (renaming = shelf.selection.focus) },
@@ -361,8 +361,8 @@
       {/if}
     {/if}
     <div class="actions">
-      <button type="button" class="pill" disabled={!hasSelection} aria-label={labels.plain} onclick={() => void shelf.paste(true)}>
-        <span class="long">{labels.plain}</span><span class="short" aria-hidden="true">Plain Text</span>
+      <button type="button" class="pill" disabled={!hasSelection} aria-label={labels.alternate} onclick={() => void shelf.paste(true)}>
+        <span class="long">{labels.alternate}</span><span class="short" aria-hidden="true">{labels.alternateShort}</span>
       </button>
       <button type="button" class="pill primary" disabled={!hasSelection} onclick={() => void shelf.paste(false)}>{labels.paste}</button>
     </div>

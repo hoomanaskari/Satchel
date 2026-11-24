@@ -37,7 +37,7 @@ Satchel keeps a searchable history of what you copy. Press a shortcut, and a she
 - **Keeps what you copy:** text (with its formatting), links, code, colors, images (screenshots, Preview, Photos, browsers' Copy Image) and files from Finder.
 - **A shelf over the Dock:** cards show the source app, the kind of clip, when you copied it and a preview. On macOS 26 the shelf uses Liquid Glass.
 - **Search** as you type, and filter by kind: Text, Links, Code, Images, Colors, Files.
-- **Paste from the keyboard:** arrow keys to choose, `Return` to paste, `⇧Return` to paste as plain text, `⌘1` to `⌘9` to paste one of the first nine clips, `⌘C` to copy without pasting, `Space` for a larger preview, `⌘⌫` to delete.
+- **Paste from the keyboard:** arrow keys to choose, `Return` to paste, `⇧Return` to paste as plain text (or with formatting, if you set **Paste text as** to Plain text in Settings), `⌘1` to `⌘9` to paste one of the first nine clips, `⌘C` to copy without pasting, `Space` for a larger preview, `⌘⌫` to delete.
 - **Paste several clips at once:** `⇧`- or `⌘`-click to select, then paste them in order.
 - **Pinboards:** pin clips (`⌘P`) to named, colored pinboards. Pinned clips are never removed.
 - **Titles:** rename a clip so it's easy to find again.

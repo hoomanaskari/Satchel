@@ -188,6 +188,11 @@ pub struct Settings {
     pub shelf_shortcut: String,
     /// Paste into the frontmost app on selection instead of only copying.
     pub paste_on_select: bool,
+    /// What a normal paste does with a text clip's formatting (HTML, RTF):
+    /// false keeps it, true pastes plain text. The other paste action
+    /// (Shift+Return, the second button) does the opposite. Off by default,
+    /// including for settings saved before it existed.
+    pub paste_plain_text: bool,
     /// Fetch the title and image of copied web links (the only feature that
     /// uses the network). On by default, including for settings saved before
     /// it existed; links that look private or one-time are never fetched.
@@ -217,6 +222,7 @@ impl Default for Settings {
             capture_images: true,
             shelf_shortcut: "CommandOrControl+Shift+V".to_string(),
             paste_on_select: true,
+            paste_plain_text: false,
             link_previews: true,
             check_for_updates: true,
             open_at_login: None,

@@ -57,14 +57,16 @@ pub mod api {
             .ok_or_else(|| error::NOT_FOUND.to_string())
     }
 
-    pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain_text: bool) -> CmdResult<()> {
+    /// `alternate`: the other paste action (Shift+Return, the second
+    /// button); see `paste::plain_for`.
+    pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], alternate: bool) -> CmdResult<()> {
         let ids = validate::clip_ids(ids)?;
-        paste::paste_clips(ctx, &ids, plain_text)
+        paste::paste_clips(ctx, &ids, alternate)
     }
 
-    pub fn copy_clip(ctx: &Ctx, id: ClipId, plain_text: bool) -> CmdResult<()> {
+    pub fn copy_clip(ctx: &Ctx, id: ClipId, alternate: bool) -> CmdResult<()> {
         let id = validate::clip_id(id)?;
-        paste::copy_clip(ctx, id, plain_text)
+        paste::copy_clip(ctx, id, alternate)
     }
 
     pub fn delete_clip(ctx: &Ctx, id: ClipId) -> CmdResult<bool> {
@@ -275,18 +277,18 @@ pub fn get_link_image(ctx: Ctxs<'_>, id: ClipId) -> CmdResult<Response> {
 }
 
 #[tauri::command]
-pub async fn paste_clip(ctx: Ctxs<'_>, id: ClipId, plain_text: bool) -> CmdResult<()> {
-    blocking(&ctx, move |c| api::paste_clips(c, &[id], plain_text)).await
+pub async fn paste_clip(ctx: Ctxs<'_>, id: ClipId, alternate: bool) -> CmdResult<()> {
+    blocking(&ctx, move |c| api::paste_clips(c, &[id], alternate)).await
 }
 
 #[tauri::command]
-pub async fn paste_clips(ctx: Ctxs<'_>, ids: Vec<ClipId>, plain_text: bool) -> CmdResult<()> {
-    blocking(&ctx, move |c| api::paste_clips(c, &ids, plain_text)).await
+pub async fn paste_clips(ctx: Ctxs<'_>, ids: Vec<ClipId>, alternate: bool) -> CmdResult<()> {
+    blocking(&ctx, move |c| api::paste_clips(c, &ids, alternate)).await
 }
 
 #[tauri::command(async)]
-pub fn copy_clip(ctx: Ctxs<'_>, id: ClipId, plain_text: bool) -> CmdResult<()> {
-    api::copy_clip(&ctx, id, plain_text)
+pub fn copy_clip(ctx: Ctxs<'_>, id: ClipId, alternate: bool) -> CmdResult<()> {
+    api::copy_clip(&ctx, id, alternate)
 }
 
 #[tauri::command(async)]

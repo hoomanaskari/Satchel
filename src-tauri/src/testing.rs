@@ -33,6 +33,7 @@ pub fn sample_settings() -> Settings {
         capture_images: true,
         shelf_shortcut: "CommandOrControl+Shift+V".into(),
         paste_on_select: true,
+        paste_plain_text: false,
         link_previews: false,
         check_for_updates: false,
         open_at_login: None,
@@ -436,7 +437,10 @@ impl ClipboardSink for FakeSink {
             return Err(());
         }
         let what = if let Some(t) = &request.text {
-            format!("text:{t}")
+            // Rich flavors are named, so a plain write that keeps one shows.
+            let html = if request.html.is_some() { " +html" } else { "" };
+            let rtf = if request.rtf.is_some() { " +rtf" } else { "" };
+            format!("text:{t}{html}{rtf}")
         } else if request.png.is_some() {
             "image".to_string()
         } else {
@@ -709,7 +713,7 @@ impl Harness {
 
     /// Inserts a clip straight into the store and returns its id.
     pub fn seed(&self, kind: ClipKind, text: &str) -> ClipId {
-        let clip = NewClip {
+        self.seed_clip(NewClip {
             kind,
             text: Some(text.into()),
             html: None,
@@ -718,7 +722,38 @@ impl Harness {
             thumbnail_png: None,
             file_paths: vec![],
             source_app: None,
-        };
+        })
+    }
+
+    /// A text clip with HTML and RTF, as copied from a rich text editor.
+    pub fn seed_rich(&self, text: &str) -> ClipId {
+        self.seed_clip(NewClip {
+            kind: ClipKind::Text,
+            text: Some(text.into()),
+            html: Some(format!("<b>{text}</b>")),
+            rtf: Some(format!("{{\\rtf1 \\b {text}}}").into_bytes()),
+            image_png: None,
+            thumbnail_png: None,
+            file_paths: vec![],
+            source_app: None,
+        })
+    }
+
+    /// A file clip of `paths`.
+    pub fn seed_files(&self, paths: &[&str]) -> ClipId {
+        self.seed_clip(NewClip {
+            kind: ClipKind::File,
+            text: None,
+            html: None,
+            rtf: None,
+            image_png: None,
+            thumbnail_png: None,
+            file_paths: paths.iter().map(|p| p.to_string()).collect(),
+            source_app: None,
+        })
+    }
+
+    fn seed_clip(&self, clip: NewClip) -> ClipId {
         let now = self.clock.now();
         self.clock.now.fetch_add(1, Ordering::SeqCst);
         match self.ctx.store.lock().insert(clip, now).unwrap() {

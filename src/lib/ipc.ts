@@ -102,10 +102,13 @@ export async function getLinkImage(id: ClipId): Promise<Uint8Array> {
   return bytes(await call("get_link_image", { id }));
 }
 
-export const pasteClip = (id: ClipId, plainText: boolean): Promise<void> => call("paste_clip", { id, plainText });
-export const pasteClips = (ids: ClipId[], plainText: boolean): Promise<void> =>
-  call("paste_clips", { ids, plainText });
-export const copyClip = (id: ClipId, plainText: boolean): Promise<void> => call("copy_clip", { id, plainText });
+// `alternate`: the other paste action (Shift+Return, the second button). Rust
+// decides what that means for each clip from the "Paste text as" setting:
+// text clips get the other format, files paste their paths as text.
+export const pasteClip = (id: ClipId, alternate: boolean): Promise<void> => call("paste_clip", { id, alternate });
+export const pasteClips = (ids: ClipId[], alternate: boolean): Promise<void> =>
+  call("paste_clips", { ids, alternate });
+export const copyClip = (id: ClipId, alternate: boolean): Promise<void> => call("copy_clip", { id, alternate });
 export const deleteClip = (id: ClipId): Promise<boolean> => call("delete_clip", { id });
 export const setClipTitle = (id: ClipId, title: string | null): Promise<void> =>
   call("set_clip_title", { id, title });

@@ -30,19 +30,19 @@ describe("navigation", () => {
 });
 
 describe("pasting and copying", () => {
-  it("Return pastes, Shift+Return pastes as plain text", () => {
-    expect(mapKey(k("Enter"), mac)).toEqual({ type: "paste", plain: false });
-    expect(mapKey(k("Enter", { shiftKey: true }), mac)).toEqual({ type: "paste", plain: true });
+  it("Return pastes, Shift+Return pastes in the other format", () => {
+    expect(mapKey(k("Enter"), mac)).toEqual({ type: "paste", alternate: false });
+    expect(mapKey(k("Enter", { shiftKey: true }), mac)).toEqual({ type: "paste", alternate: true });
   });
 
   it("Cmd+1…9 (Ctrl elsewhere) pastes the nth visible clip", () => {
-    expect(mapKey(k("1", { metaKey: true, code: "Digit1" }), mac)).toEqual({ type: "pasteNth", n: 1, plain: false });
-    expect(mapKey(k("9", { ctrlKey: true, code: "Digit9" }), win)).toEqual({ type: "pasteNth", n: 9, plain: false });
+    expect(mapKey(k("1", { metaKey: true, code: "Digit1" }), mac)).toEqual({ type: "pasteNth", n: 1, alternate: false });
+    expect(mapKey(k("9", { ctrlKey: true, code: "Digit9" }), win)).toEqual({ type: "pasteNth", n: 9, alternate: false });
     // Shift changes the key on most layouts; the code still identifies the digit.
     expect(mapKey(k("!", { metaKey: true, shiftKey: true, code: "Digit1" }), mac)).toEqual({
       type: "pasteNth",
       n: 1,
-      plain: true,
+      alternate: true,
     });
     expect(mapKey(k("0", { metaKey: true, code: "Digit0" }), mac)).toBeNull();
     expect(mapKey(k("1", { ctrlKey: true, code: "Digit1" }), mac)).toBeNull();
@@ -50,10 +50,10 @@ describe("pasting and copying", () => {
   });
 
   it("Cmd+C copies the clip unless text is selected in a field", () => {
-    expect(mapKey(k("c", { metaKey: true, code: "KeyC" }), mac)).toEqual({ type: "copy", plain: false });
-    expect(mapKey(k("C", { metaKey: true, shiftKey: true, code: "KeyC" }), mac)).toEqual({ type: "copy", plain: true });
+    expect(mapKey(k("c", { metaKey: true, code: "KeyC" }), mac)).toEqual({ type: "copy", alternate: false });
+    expect(mapKey(k("C", { metaKey: true, shiftKey: true, code: "KeyC" }), mac)).toEqual({ type: "copy", alternate: true });
     expect(mapKey(k("c", { metaKey: true, code: "KeyC" }), { ...mac, hasTextSelection: true })).toBeNull();
-    expect(mapKey(k("c", { ctrlKey: true, code: "KeyC" }), win)).toEqual({ type: "copy", plain: false });
+    expect(mapKey(k("c", { ctrlKey: true, code: "KeyC" }), win)).toEqual({ type: "copy", alternate: false });
   });
 });
 
@@ -143,7 +143,7 @@ describe("settings", () => {
 describe("onControl only applies outside text fields", () => {
   it("still pastes and previews from the search field", () => {
     const ctx: KeyContext = { ...mac, focus: "search", onControl: true };
-    expect(mapKey(k("Enter"), ctx)).toEqual({ type: "paste", plain: false });
+    expect(mapKey(k("Enter"), ctx)).toEqual({ type: "paste", alternate: false });
     expect(mapKey(k(" "), ctx)).toEqual({ type: "preview" });
   });
 });
