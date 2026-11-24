@@ -75,6 +75,15 @@ export interface CardPreview {
   mono: boolean;
   /** Validated hex for the color swatch. */
   swatch: string | null;
+  /** A link with a fetched preview: what its image area shows. */
+  link: LinkCard | null;
+}
+
+export interface LinkCard {
+  /** "photo": the page's image fills the area; "icon": the site icon over its name; null: a link glyph over its name. */
+  image: "photo" | "icon" | null;
+  site: string;
+  host: string;
 }
 
 function cleanBody(s: string): string {
@@ -101,10 +110,23 @@ function linkParts(raw: string): { host: string; rest: string } | null {
 const FILES_SHOWN = 5;
 
 export function cardPreview(c: ClipSummary): CardPreview {
-  const base: CardPreview = { head: c.title, body: cleanBody(c.preview), mono: false, swatch: null };
+  const base: CardPreview = { head: c.title, body: cleanBody(c.preview), mono: false, swatch: null, link: null };
   switch (c.kind) {
     case "link": {
       const p = linkParts(c.preview);
+      const lp = c.linkPreview;
+      if (p && lp) {
+        // Title (own, else the page's, else the host) over the host; the
+        // full address stays in the title attribute and the preview panel.
+        const site = lp.site.trim() || p.host;
+        const sameSite = site.toLowerCase() === p.host.toLowerCase();
+        return {
+          ...base,
+          head: c.title ?? lp.title ?? p.host,
+          body: sameSite ? p.host : `${site} · ${p.host}`,
+          link: { image: lp.image, site, host: p.host },
+        };
+      }
       return p ? { ...base, head: c.title ?? p.host, body: p.rest } : base;
     }
     case "code":
@@ -142,6 +164,8 @@ export function cardLabel(c: ClipSummary, now: number): string {
   let text = (p.head ?? p.body).replace(/\s+/g, " ").trim();
   if (text.length > LABEL_CHARS) text = text.slice(0, LABEL_CHARS) + "…";
   const parts = [kindLabel(c.kind), text];
+  // A previewed link reads as its title and site, as the card shows it.
+  if (p.link && p.head !== p.link.host) parts.push(p.body);
   if (c.sourceApp) parts.push(`from ${c.sourceApp.name}`);
   parts.push(relativeTime(c.lastUsedAt, now));
   return parts.filter(Boolean).join(", ");

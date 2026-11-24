@@ -1,13 +1,14 @@
 //! Fakes for every seam in `Ctx`, used by the unit tests.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use satchel_core::{
-    ClipContent, ClipId, ClipKind, ClipSummary, Error, InsertOutcome, Millis, NewClip, Pinboard,
-    PinboardId, Query, Result, Settings, privacy::CaptureContext,
+    ClipContent, ClipId, ClipKind, ClipSummary, Error, InsertOutcome, LinkPreviewJob,
+    LinkPreviewOutcome, Millis, NewClip, Pinboard, PinboardId, Query, Result, Settings,
+    privacy::CaptureContext,
 };
 
 use crate::clipboard::{
@@ -31,6 +32,7 @@ pub fn sample_settings() -> Settings {
         capture_images: true,
         shelf_shortcut: "CommandOrControl+Shift+V".into(),
         paste_on_select: true,
+        link_previews: false,
     }
 }
 
@@ -67,6 +69,7 @@ pub struct FakeStore {
     boards: Vec<Pinboard>,
     next_id: i64,
     settings: Option<Settings>,
+    windows: std::collections::HashMap<String, String>,
     pub fail: bool,
 }
 
@@ -95,6 +98,7 @@ impl FakeStore {
             byte_size: 0,
             has_thumbnail: row.clip.thumbnail_png.is_some(),
             pinboard_ids: row.pins.clone(),
+            link_preview: None,
         }
     }
 
@@ -253,11 +257,51 @@ impl ClipStore for FakeStore {
         self.settings = Some(settings.clone());
         Ok(())
     }
+    fn window_state(&self, name: &str) -> Result<Option<String>> {
+        self.check()?;
+        Ok(self.windows.get(name).cloned())
+    }
+    fn save_window_state(&mut self, name: &str, value: &str) -> Result<()> {
+        self.check()?;
+        self.windows.insert(name.to_owned(), value.to_owned());
+        Ok(())
+    }
+    // Link previews are tested against the real store
+    // (`Harness::with_real_core`); the fake has none.
+    fn queue_link_preview(&mut self, _id: ClipId, _now: Millis) -> Result<bool> {
+        self.check()?;
+        Ok(false)
+    }
+    fn queue_link_backfill(&mut self, _now: Millis) -> Result<Option<ClipId>> {
+        self.check()?;
+        Ok(None)
+    }
+    fn claim_link_preview(&mut self, _now: Millis, _lease_ms: Millis) -> Result<Option<LinkPreviewJob>> {
+        self.check()?;
+        Ok(None)
+    }
+    fn next_link_preview_at(&self) -> Result<Option<Millis>> {
+        Ok(None)
+    }
+    fn finish_link_preview(&mut self, _id: ClipId, _outcome: LinkPreviewOutcome, _now: Millis) -> Result<bool> {
+        Ok(false)
+    }
+    fn link_preview_image(&self, _id: ClipId) -> Result<Option<Vec<u8>>> {
+        self.check()?;
+        Ok(None)
+    }
+    fn clear_link_previews(&mut self) -> Result<u64> {
+        self.check()?;
+        Ok(0)
+    }
 }
 
 // ---------------------------------------------------------------- events
 
-pub struct FakeEvents(pub Arc<Log>);
+/// Records events in the log, except `clip_saved`, which is counted apart
+/// (it fires alongside `clips-changed inserted`, so logging it would only
+/// repeat that entry).
+pub struct FakeEvents(pub Arc<Log>, pub Arc<AtomicUsize>);
 
 impl EventSink for FakeEvents {
     fn clips_changed(&self, reason: ChangeReason, id: Option<ClipId>) {
@@ -277,6 +321,9 @@ impl EventSink for FakeEvents {
     fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64) {
         let kind = serde_json::to_value(kind).unwrap();
         self.0.push(format!("event capture-skipped {} {limit_bytes}", kind.as_str().unwrap()));
+    }
+    fn clip_saved(&self) {
+        self.1.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -420,6 +467,10 @@ impl ShelfControl for FakeShelf {
     fn hide(&self) {
         self.0.push("hide shelf");
     }
+
+    fn dismiss(&self) {
+        self.0.push("dismiss shelf");
+    }
 }
 
 pub struct FakeSettingsWindow(pub Arc<Log>);
@@ -517,6 +568,8 @@ pub struct Harness {
     pub policy: Arc<FakePolicy>,
     pub clock: Arc<FakeClock>,
     pub shortcuts: Arc<FakeShortcuts>,
+    /// How many times the menu bar animation was asked for.
+    pub clips_saved: Arc<AtomicUsize>,
 }
 
 impl Harness {
@@ -554,11 +607,12 @@ impl Harness {
             on_sleep: Mutex::new(VecDeque::new()),
         });
         let shortcuts = Arc::new(FakeShortcuts { log: log.clone(), refuse: Mutex::new(None) });
+        let clips_saved = Arc::new(AtomicUsize::new(0));
         let ctx = Arc::new(Ctx {
             store: SharedStore::new(store),
             settings: RwLock::new(sample_settings()),
             self_writes: SelfWrites::default(),
-            events: Arc::new(FakeEvents(log.clone())),
+            events: Arc::new(FakeEvents(log.clone(), clips_saved.clone())),
             desktop: desktop.clone(),
             clipboard: Arc::new(FakeSink { board: board.clone(), log: log.clone() }),
             policy: if real_policy {
@@ -575,8 +629,9 @@ impl Harness {
             previous_app: Mutex::new(None),
             paste_lock: Mutex::new(()),
             accessibility_prompted: AtomicBool::new(false),
+            link_wake: Default::default(),
         });
-        Self { ctx, log, board, desktop, policy, clock, shortcuts }
+        Self { ctx, log, board, desktop, policy, clock, shortcuts, clips_saved }
     }
 
     pub fn source(&self) -> FakeSource {

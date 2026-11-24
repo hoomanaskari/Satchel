@@ -291,7 +291,7 @@ fn version_1_databases_gain_the_rtf_column() {
     {
         // Put the file back the way schema version 1 left it.
         let conn = rusqlite::Connection::open(&db).unwrap();
-        conn.execute_batch("ALTER TABLE clip_data DROP COLUMN rtf; PRAGMA user_version = 1;")
+        conn.execute_batch(&format!("{UNDO_VERSION_3}\nALTER TABLE clip_data DROP COLUMN rtf; PRAGMA user_version = 1;"))
             .unwrap();
     }
     let mut s = Store::open(&db).unwrap();
@@ -304,3 +304,106 @@ fn version_1_databases_gain_the_rtf_column() {
     };
     assert_eq!(s.content(rich).unwrap().unwrap().rtf.as_deref(), Some(&b"{\\rtf1 x}"[..]));
 }
+
+#[test]
+fn version_2_databases_gain_link_previews_with_the_setting_on() {
+    let tmp = TempDir::new();
+    let db = tmp.path().join("satchel.db");
+    {
+        let mut s = Store::open(&db).unwrap();
+        s.insert(NewClip { kind: ClipKind::Link, ..clip("https://www.example.com/old") }, 1).unwrap();
+        s.insert(clip("searchable words"), 2).unwrap();
+        s.save_settings(&Settings { max_items: 500, ..Settings::default() }).unwrap();
+    }
+    {
+        // Put the file back the way schema version 2 left it: the version 2
+        // view and triggers, no preview tables, no `link_previews` setting.
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            &format!("{UNDO_VERSION_3}\n            DELETE FROM settings WHERE key = 'link_previews';
+            PRAGMA user_version = 2;
+            "),
+        )
+        .unwrap();
+    }
+    let mut s = Store::open(&db).unwrap();
+    let settings = s.settings().unwrap();
+    assert_eq!(settings.max_items, 500);
+    assert!(settings.link_previews, "settings saved before the field existed read as on");
+    let old = s.list(&Query::default()).unwrap();
+    assert_eq!(old.len(), 2);
+    assert!(old.iter().all(|c| c.link_preview.is_none()));
+    let link = old.iter().find(|c| c.kind == ClipKind::Link).unwrap().id;
+    assert!(s.queue_link_preview(link, 3).unwrap());
+    // The existing index still matches the new view (no rebuild needed).
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute("INSERT INTO clips_fts (clips_fts, rank) VALUES ('integrity-check', 1)", []).unwrap();
+    s.set_title(link, Some("renamed")).unwrap();
+    assert!(s.delete(link).unwrap());
+    conn.execute("INSERT INTO clips_fts (clips_fts, rank) VALUES ('integrity-check', 1)", []).unwrap();
+}
+
+#[test]
+fn cleared_previews_leave_no_trace_on_disk() {
+    let tmp = TempDir::new();
+    let db = tmp.path().join("satchel.db");
+    let mut s = Store::open(&db).unwrap();
+    for i in 0..20 {
+        s.insert(clip(&format!("filler {i}")), i).unwrap();
+    }
+    let id = match s.insert(NewClip { kind: ClipKind::Link, ..clip("https://www.example.com/x") }, 50).unwrap() {
+        satchel_core::InsertOutcome::Inserted(c) => c.id,
+        other => panic!("{other:?}"),
+    };
+    s.queue_link_preview(id, 0).unwrap();
+    s.claim_link_preview(0, 0).unwrap();
+    let title = "quokkapreviewtitle";
+    let image = b"pngbytesquokkaimage".to_vec();
+    s.finish_link_preview(
+        id,
+        satchel_core::LinkPreviewOutcome::Ready(satchel_core::FetchedPreview {
+            title: Some(title.into()),
+            site: "Example".into(),
+            image: Some((satchel_core::LinkImageKind::Photo, image.clone())),
+        }),
+        0,
+    )
+    .unwrap();
+    assert!(contains(&file_bytes(tmp.path()), title.as_bytes()), "sanity: on disk");
+    assert_eq!(s.clear_link_previews().unwrap(), 1);
+    let bytes = file_bytes(tmp.path());
+    assert!(!contains(&bytes, title.as_bytes()), "cleared title left on disk");
+    assert!(!contains(&bytes, &image), "cleared image left on disk");
+}
+
+/// Turns a current database back into what schema version 2 left.
+const UNDO_VERSION_3: &str = r#"
+            DROP TRIGGER clip_data_after_insert;
+            DROP TRIGGER clips_before_delete;
+            DROP TRIGGER clips_after_title_update;
+            DROP TRIGGER link_previews_after_title_update;
+            DROP VIEW clips_fts_source;
+            DROP TABLE link_preview_images;
+            DROP TABLE link_previews;
+            CREATE VIEW clips_fts_source AS
+                SELECT c.id AS id, COALESCE(d.search_body, d.text, '') AS body, c.title AS title, c.app_name AS app
+                FROM clips c JOIN clip_data d ON d.clip_id = c.id;
+            CREATE TRIGGER clip_data_after_insert AFTER INSERT ON clip_data BEGIN
+                INSERT INTO clips_fts (rowid, body, title, app)
+                SELECT new.clip_id, COALESCE(new.search_body, new.text, ''), c.title, c.app_name
+                FROM clips c WHERE c.id = new.clip_id;
+            END;
+            CREATE TRIGGER clips_before_delete BEFORE DELETE ON clips BEGIN
+                INSERT INTO clips_fts (clips_fts, rowid, body, title, app)
+                SELECT 'delete', old.id, COALESCE(d.search_body, d.text, ''), old.title, old.app_name
+                FROM clip_data d WHERE d.clip_id = old.id;
+            END;
+            CREATE TRIGGER clips_after_title_update AFTER UPDATE OF title ON clips BEGIN
+                INSERT INTO clips_fts (clips_fts, rowid, body, title, app)
+                SELECT 'delete', old.id, COALESCE(d.search_body, d.text, ''), old.title, old.app_name
+                FROM clip_data d WHERE d.clip_id = old.id;
+                INSERT INTO clips_fts (rowid, body, title, app)
+                SELECT new.id, COALESCE(d.search_body, d.text, ''), new.title, new.app_name
+                FROM clip_data d WHERE d.clip_id = new.id;
+            END;
+"#;

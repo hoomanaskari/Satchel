@@ -42,6 +42,14 @@ pub fn should_capture(ctx: &CaptureContext<'_>, settings: &Settings) -> bool {
     }
 }
 
+/// True when `app_id` is on the excluded-apps list, matched as
+/// `should_capture` matches it. Used again before a link preview is fetched,
+/// since the list may have changed since the clip was captured.
+pub fn is_excluded_app(app_id: &str, settings: &Settings) -> bool {
+    let app = normalize_app_id(app_id);
+    !app.is_empty() && settings.excluded_app_ids.iter().any(|ex| normalize_app_id(ex) == app)
+}
+
 /// Pasteboard types / clipboard formats whose presence means "do not record".
 const PRIVACY_MARKERS: &[&str] = &[
     // nspasteboard.org conventions (macOS).
@@ -145,6 +153,17 @@ const DEFAULT_EXCLUDED_APP_IDS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excluded_apps_are_recognised_like_capture_does() {
+        let s = Settings { excluded_app_ids: vec!["com.example.Vault".into(), "KeePass.exe".into()], ..Settings::default() };
+        assert!(is_excluded_app("com.example.vault", &s));
+        assert!(is_excluded_app(" COM.EXAMPLE.VAULT ", &s));
+        assert!(is_excluded_app("C:\\Program Files\\keepass.exe", &s));
+        assert!(is_excluded_app("keepass", &s));
+        assert!(!is_excluded_app("com.apple.Safari", &s));
+        assert!(!is_excluded_app("", &s));
+    }
 
     fn settings() -> Settings {
         Settings::default()

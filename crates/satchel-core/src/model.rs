@@ -75,6 +75,64 @@ pub struct ClipSummary {
     pub byte_size: u64,
     pub has_thumbnail: bool,
     pub pinboard_ids: Vec<PinboardId>,
+    /// The fetched preview of a link clip, when "Show link previews" is on
+    /// and the page could be read. `None` otherwise.
+    pub link_preview: Option<LinkPreview>,
+}
+
+/// What a link's page says about itself, cached in the store.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkPreview {
+    /// Page title (`og:title`, `twitter:title` or `<title>`), cleaned.
+    pub title: Option<String>,
+    /// Site name (`og:site_name`), else the host without `www.`.
+    pub site: String,
+    /// What `link_preview_image` returns, if anything.
+    pub image: Option<LinkImageKind>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkImageKind {
+    /// The page's preview image, scaled for the card.
+    Photo,
+    /// The site's icon (no preview image).
+    Icon,
+}
+
+/// A fetched page, ready to cache (`Store::finish_link_preview`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FetchedPreview {
+    pub title: Option<String>,
+    pub site: String,
+    /// PNG bytes and what they show.
+    pub image: Option<(LinkImageKind, Vec<u8>)>,
+}
+
+/// How a link preview attempt ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkPreviewOutcome {
+    Ready(FetchedPreview),
+    /// A transient failure (offline, timeout, 5xx, 429): try again at
+    /// `retry_at`, unless attempts are used up.
+    Retry { retry_at: Millis },
+    /// Not retried: the page refused, is not HTML, is too large, or its
+    /// address is not public.
+    Failed,
+    /// Never fetched: the link failed the privacy checks, or its app is
+    /// excluded.
+    Skipped,
+}
+
+/// A link clip whose preview is due, claimed by one worker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkPreviewJob {
+    pub clip_id: ClipId,
+    pub url: String,
+    pub source_app_id: Option<String>,
+    /// Attempts made before this one.
+    pub attempts: u32,
 }
 
 /// Full payload, fetched only when pasting or previewing one clip.
@@ -130,6 +188,10 @@ pub struct Settings {
     pub shelf_shortcut: String,
     /// Paste into the frontmost app on selection instead of only copying.
     pub paste_on_select: bool,
+    /// Fetch the title and image of copied web links (the only feature that
+    /// uses the network). On by default, including for settings saved before
+    /// it existed; links that look private or one-time are never fetched.
+    pub link_previews: bool,
 }
 
 impl Default for Settings {
@@ -142,6 +204,7 @@ impl Default for Settings {
             capture_images: true,
             shelf_shortcut: "CommandOrControl+Shift+V".to_string(),
             paste_on_select: true,
+            link_previews: true,
         }
     }
 }

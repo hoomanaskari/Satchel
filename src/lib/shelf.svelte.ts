@@ -161,6 +161,15 @@ export class Shelf {
     return this.pinboards.find((p) => p.id === this.pinboardId) ?? null;
   }
 
+  /**
+   * Capture is paused (from the shelf, the tray menu or the Settings window):
+   * the header shows it until it resumes. Follows `settings`, which every
+   * pause change updates through `settings-changed` and each open reloads.
+   */
+  get paused(): boolean {
+    return this.settings?.capturePaused ?? false;
+  }
+
   get pasteOnSelect(): boolean {
     return this.settings?.pasteOnSelect ?? true;
   }
@@ -219,7 +228,9 @@ export class Shelf {
     this.needsPastePermission = false;
     this.stale = false;
     this.focusSearchTick++;
-    await this.reload();
+    // Settings too, so a missed `settings-changed` (the pause state above
+    // all) never leaves the header stale.
+    await Promise.all([this.loadSettings(), this.reload()]);
     // After the reload, whose new selection clears the notice.
     if (this.pendingNotice) {
       this.flash = this.pendingNotice;

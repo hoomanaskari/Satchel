@@ -507,3 +507,48 @@ describe("keyboard dispatch", () => {
     expect(cmds()).not.toContain("hide_shelf");
   });
 });
+
+describe("paused indicator", () => {
+  it("is off by default", () => {
+    expect(shelf.paused).toBe(false);
+  });
+
+  it("follows the shelf's own toggle, and resuming clears it", async () => {
+    await shelf.setPaused(true);
+    expect(shelf.paused).toBe(true);
+    await shelf.setPaused(false);
+    expect(shelf.paused).toBe(false);
+    expect(lastOf("set_capture_paused")!.args).toEqual({ paused: false });
+    // A state, not a notice: the notice slot stays empty throughout.
+    expect(shelf.notice).toBeNull();
+  });
+
+  it("follows a pause from elsewhere (tray, Settings) while the shelf is up", async () => {
+    // The tray calls the same Rust command, which emits settings-changed.
+    await mock.transport.invoke("set_capture_paused", { paused: true });
+    expect(shelf.paused).toBe(true);
+    await mock.transport.invoke("set_capture_paused", { paused: false });
+    expect(shelf.paused).toBe(false);
+  });
+
+  it("follows a pause from elsewhere while the shelf is hidden", async () => {
+    shelf.setVisible(false);
+    // The Settings window saves the whole settings object.
+    const s = (await mock.transport.invoke("get_settings")) as Record<string, unknown>;
+    await mock.transport.invoke("save_settings", { settings: { ...s, capturePaused: true } });
+    mock.show();
+    await flush();
+    await flush();
+    expect(shelf.paused).toBe(true);
+  });
+
+  it("reloads settings on open, so a missed event never leaves it stale", async () => {
+    shelf.setVisible(false);
+    mock.setPausedSilently(true);
+    expect(shelf.paused).toBe(false);
+    mock.show();
+    await flush();
+    await flush();
+    expect(shelf.paused).toBe(true);
+  });
+});

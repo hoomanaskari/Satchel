@@ -47,6 +47,16 @@ pub mod api {
             .ok_or_else(|| error::NOT_FOUND.to_string())
     }
 
+    /// PNG of a link clip's preview image or site icon.
+    pub fn get_link_image(ctx: &Ctx, id: ClipId) -> CmdResult<Vec<u8>> {
+        let id = validate::clip_id(id)?;
+        ctx.store
+            .lock()
+            .link_preview_image(id)
+            .map_err(store_error)?
+            .ok_or_else(|| error::NOT_FOUND.to_string())
+    }
+
     pub fn paste_clips(ctx: &Ctx, ids: &[ClipId], plain_text: bool) -> CmdResult<()> {
         let ids = validate::clip_ids(ids)?;
         paste::paste_clips(ctx, &ids, plain_text)
@@ -143,6 +153,18 @@ pub mod api {
         if removed > 0 {
             ctx.events.clips_changed(ChangeReason::Deleted, None);
         }
+        if old.link_previews && !new.link_previews {
+            // Off means off: the cache and the queue go too. Workers check
+            // the setting before every request and drop late results.
+            let cleared = ctx.store.lock().clear_link_previews().unwrap_or(0);
+            if cleared > 0 {
+                ctx.events.clips_changed(ChangeReason::Updated, None);
+            }
+        } else if new.link_previews && !old.link_previews {
+            // Older links get previews again, paced like at launch.
+            let now = ctx.clock.now();
+            ctx.link_wake.start_backfill(now.saturating_add(crate::link_preview::BACKFILL_EVERY_MS));
+        }
         Ok(())
     }
 
@@ -236,6 +258,12 @@ pub fn get_clip_text(ctx: Ctxs<'_>, id: ClipId) -> CmdResult<Option<String>> {
 #[tauri::command(async)]
 pub fn get_clip_thumbnail(ctx: Ctxs<'_>, id: ClipId) -> CmdResult<Response> {
     api::get_clip_thumbnail(&ctx, id).map(Response::new)
+}
+
+/// Raw PNG bytes, like `get_clip_thumbnail`.
+#[tauri::command(async)]
+pub fn get_link_image(ctx: Ctxs<'_>, id: ClipId) -> CmdResult<Response> {
+    api::get_link_image(&ctx, id).map(Response::new)
 }
 
 #[tauri::command]
@@ -612,6 +640,39 @@ mod tests {
     fn choose_app_passes_the_dialog_result_through() {
         let h = Harness::new();
         assert_eq!(api::choose_app(&h.ctx).map(|a| a.id), Some("com.example.chosen".into()));
+    }
+
+    #[test]
+    fn link_images_are_served_only_for_ready_previews() {
+        let h = Harness::with_real_core();
+        let id = h.seed(ClipKind::Link, "https://www.example.com/a");
+        assert_eq!(api::get_link_image(&h.ctx, id), Err(error::NOT_FOUND.into()));
+        assert!(api::get_link_image(&h.ctx, 0).is_err());
+        let mut store = h.ctx.store.lock();
+        store.queue_link_preview(id, 0).unwrap();
+        store.claim_link_preview(i64::MAX - 1, 0).unwrap();
+        let page = satchel_core::FetchedPreview {
+            title: Some("T".into()),
+            site: "S".into(),
+            image: Some((satchel_core::LinkImageKind::Photo, vec![9, 9])),
+        };
+        store.finish_link_preview(id, satchel_core::LinkPreviewOutcome::Ready(page), 0).unwrap();
+        drop(store);
+        assert_eq!(api::get_link_image(&h.ctx, id), Ok(vec![9, 9]));
+    }
+
+    #[test]
+    fn turning_link_previews_off_clears_them_and_on_wakes_the_workers() {
+        let h = Harness::with_real_core();
+        let id = h.seed(ClipKind::Link, "https://www.example.com/a");
+        api::save_settings(&h.ctx, Settings { link_previews: true, ..sample_settings() }).unwrap();
+        crate::link_preview::on_copied(&h.ctx, id, ClipKind::Link);
+        assert!(h.ctx.store.lock().next_link_preview_at().unwrap().is_some());
+        h.log.clear();
+        api::save_settings(&h.ctx, sample_settings()).unwrap();
+        assert_eq!(h.ctx.store.lock().next_link_preview_at().unwrap(), None, "queue cleared");
+        assert!(h.log.entries().contains(&"event clips-changed updated".to_string()));
+        assert!(!h.ctx.store.lock().settings().unwrap().link_previews);
     }
 
     #[test]

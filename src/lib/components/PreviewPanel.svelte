@@ -12,6 +12,7 @@
     clip,
     preview,
     thumbs,
+    linkImages,
     icons,
     now,
     onclose,
@@ -19,6 +20,7 @@
     clip: ClipSummary;
     preview: PreviewState | null;
     thumbs: ThumbnailCache;
+    linkImages: ThumbnailCache;
     icons: AppIconCache | null;
     now: number;
     onclose: () => void;
@@ -44,6 +46,22 @@
       thumbs.release(id);
     };
   });
+
+  let linkUrl = $state<string | null>(null);
+  const linkImageId = $derived(card.link?.image ? clip.id : null);
+  $effect(() => {
+    const id = linkImageId;
+    if (id === null) return;
+    let alive = true;
+    linkImages.acquire(id).then((u) => {
+      if (alive) linkUrl = u;
+    });
+    return () => {
+      alive = false;
+      linkUrl = null;
+      linkImages.release(id);
+    };
+  });
 </script>
 
 <section class="preview" aria-label="Preview" aria-live="polite">
@@ -61,6 +79,20 @@
       <ul class="files">
         {#each files as f, i (i)}<li><Icon name="file" size={14} /><span>{f}</span></li>{/each}
       </ul>
+    {:else if card.link}
+      <div class="link">
+        {#if card.link.image === "photo"}
+          <div class="cover">{#if linkUrl}<img src={linkUrl} alt="" draggable="false" />{:else}<Icon name="image" size={30} />{/if}</div>
+        {/if}
+        <div class="link-text">
+          <div class="site">
+            {#if card.link.image === "icon" && linkUrl}<img class="favicon" src={linkUrl} alt="" draggable="false" />{/if}
+            <span>{card.link.site}</span>
+          </div>
+          {#if clip.linkPreview?.title}<p class="page-title">{clip.linkPreview.title}</p>{/if}
+          <pre class="url">{preview?.text ?? clip.preview}</pre>
+        </div>
+      </div>
     {:else if preview?.loading}
       <p class="muted">Loading…</p>
     {:else}
@@ -82,6 +114,10 @@
       <dd>{relativeTime(clip.createdAt, now)}</dd>
       <dt>Last used</dt>
       <dd>{relativeTime(clip.lastUsedAt, now)}</dd>
+      {#if card.link}
+        <dt>Site</dt>
+        <dd class="wrap">{card.link.host}</dd>
+      {/if}
       {#if clip.kind === "image" && clip.preview.trim()}
         <dt>Dimensions</dt>
         <dd>{clip.preview}</dd>
@@ -148,6 +184,64 @@
     max-height: 100%;
     object-fit: contain;
     border-radius: 8px;
+  }
+  .link {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .cover {
+    width: 240px;
+    height: 150px;
+    flex: none;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--sub);
+    color: var(--sec);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .link-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .site {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sec);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .favicon {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    object-fit: contain;
+  }
+  .page-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  pre.url {
+    font-size: 12.5px;
+    color: var(--sec);
+  }
+  .wrap {
+    overflow-wrap: anywhere;
   }
   .color {
     display: flex;

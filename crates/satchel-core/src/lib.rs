@@ -10,6 +10,7 @@
 
 pub mod classify;
 pub mod error;
+pub mod link;
 pub mod model;
 pub mod privacy;
 pub mod store;

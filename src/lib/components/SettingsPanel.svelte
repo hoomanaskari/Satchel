@@ -44,6 +44,7 @@
         draft.retentionDays !== settings.retentionDays ||
         draft.captureImages !== settings.captureImages ||
         draft.pasteOnSelect !== settings.pasteOnSelect ||
+        draft.linkPreviews !== settings.linkPreviews ||
         draft.shelfShortcut !== settings.shelfShortcut ||
         draft.excludedAppIds.join("\n") !== settings.excludedAppIds.join("\n")),
   );
@@ -63,6 +64,26 @@
   let confirmClear = $state(false);
   let pickerOpen = $state(false);
   let addButton = $state<HTMLButtonElement | null>(null);
+
+  // The body scrolls between the title bar and the pinned footer. Overlay
+  // scroll bars hide when idle, so a divider (and a fade at the bottom) shows
+  // whenever content runs past either edge.
+  let body = $state<HTMLDivElement | null>(null);
+  let moreAbove = $state(false);
+  let moreBelow = $state(false);
+  function measureScroll() {
+    if (!body) return;
+    moreAbove = body.scrollTop > 0;
+    moreBelow = body.scrollTop + body.clientHeight < body.scrollHeight - 1;
+  }
+  $effect(() => {
+    if (!body) return;
+    const observer = new ResizeObserver(measureScroll);
+    observer.observe(body);
+    for (const section of body.children) observer.observe(section);
+    measureScroll();
+    return () => observer.disconnect();
+  });
 
   // Installed app (or null) for each excluded id, keyed by lowercased id.
   // Ids not resolved yet are fetched in one call whenever the list changes.
@@ -183,9 +204,9 @@
   }}
 >
   {#if !draft}
-    <p class="muted">Loading settings…</p>
+    <p class="muted loading">Loading settings…</p>
   {:else}
-    <div class="grid">
+    <div class="grid" bind:this={body} onscroll={measureScroll} class:more-above={moreAbove} class:more-below={moreBelow}>
       <fieldset>
         <legend>History</legend>
         <label class="row">
@@ -248,6 +269,15 @@
           Paste into the active app
         </label>
         <p class="muted">When off, choosing a clip only copies it.</p>
+        <label class="check">
+          <input type="checkbox" bind:checked={draft.linkPreviews} aria-describedby="link-previews-hint" />
+          Show link previews
+        </label>
+        <p class="muted" id="link-previews-hint">
+          On by default: Satchel fetches each web link you copy once from its site (which sees the link and your IP address)
+          to show its title and image. Sign-in, one-time and private-network links are never fetched. Turn off to stop
+          fetching and delete saved previews.
+        </p>
       </fieldset>
 
       <fieldset class="apps">
@@ -270,7 +300,7 @@
       </fieldset>
     </div>
 
-    <div class="actions">
+    <div class="actions" class:divided={moreBelow}>
       {#if confirmClear}
         <span>Delete all unpinned clips?</span>
         <button type="button" class="danger" onclick={clear}>Clear History</button>
@@ -309,18 +339,40 @@
   .settings {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    height: 100%;
-    padding: 6px 20px 14px;
+    flex: 1;
+    min-height: 0;
     font-size: 13px;
   }
+  .loading {
+    margin: 0;
+    padding: 16px 20px;
+  }
+  /* The scrolling body: two columns (the window's minimum width fits them),
+     one below that as a fallback. Rows keep their natural height. */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
     gap: 14px;
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 16px 20px;
+    scroll-padding-block: 16px;
+    border-top: 1px solid transparent;
+  }
+  @media (max-width: 559px) {
+    .grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .grid.more-above {
+    border-top-color: var(--hair);
+  }
+  .grid.more-below {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
   }
   fieldset {
     margin: 0;
@@ -462,11 +514,17 @@
   .danger-quiet {
     color: var(--danger);
   }
+  /* Pinned under the scrolling body. */
   .actions {
     display: flex;
     align-items: center;
     gap: 8px;
     flex: none;
+    padding: 10px 20px 14px;
+    border-top: 1px solid transparent;
+  }
+  .actions.divided {
+    border-top-color: var(--hair);
   }
   .status {
     color: var(--sec);

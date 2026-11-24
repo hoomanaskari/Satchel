@@ -4,6 +4,7 @@ const COMMANDS: &[&str] = &[
     "list_clips",
     "get_clip_text",
     "get_clip_thumbnail",
+    "get_link_image",
     "paste_clip",
     "paste_clips",
     "copy_clip",

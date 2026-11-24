@@ -15,13 +15,14 @@
   interface Props {
     shelf: Shelf;
     thumbs: ThumbnailCache;
+    linkImages: ThumbnailCache;
     icons: AppIconCache | null;
     renaming: ClipId | null;
     onpin: (id: ClipId, anchor: HTMLElement) => void;
     onmenu: (x: number, y: number) => void;
     onrename: (id: ClipId, title: string | null) => void;
   }
-  let { shelf, thumbs, icons, renaming, onpin, onmenu, onrename }: Props = $props();
+  let { shelf, thumbs, linkImages, icons, renaming, onpin, onmenu, onrename }: Props = $props();
 
   const L: Layout = { item: 226, gap: 14, pad: 20 };
 
@@ -103,6 +104,7 @@
           <ClipCard
             {clip}
             {thumbs}
+            {linkImages}
             {icons}
             selected={selected.has(clip.id)}
             current={shelf.selection.focus === clip.id}

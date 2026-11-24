@@ -8,6 +8,7 @@ mod commands;
 mod ctx;
 mod error;
 mod events;
+mod link_preview;
 mod paste;
 mod platform;
 mod settings_window;
@@ -16,8 +17,10 @@ mod shortcut;
 mod storage;
 mod thumbnail;
 mod tray;
+mod tray_anim;
 mod validate;
 mod watcher;
+mod window_frame;
 
 #[cfg(test)]
 mod integration_tests;
@@ -64,6 +67,9 @@ impl<R: Runtime> EventSink for TauriEvents<R> {
     }
     fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64) {
         let _ = self.app.emit(events::CAPTURE_SKIPPED, CaptureSkipped { kind, limit_bytes });
+    }
+    fn clip_saved(&self) {
+        tray::clip_saved(&self.app);
     }
 }
 
@@ -129,6 +135,7 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         previous_app: Mutex::new(None),
         paste_lock: Mutex::new(()),
         accessibility_prompted: AtomicBool::new(false),
+        link_wake: Default::default(),
     });
     app.manage(ctx.clone());
 
@@ -147,6 +154,13 @@ fn setup<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error
         let _ = shortcuts.register(&fallback);
     }
 
+    // Idle (blocked on a condition variable) unless "Show link previews" is
+    // on and a link is queued; they are the only code that uses the network.
+    link_preview::spawn(
+        ctx.clone(),
+        Arc::new(link_preview::http::HttpFetcher::new()),
+        Arc::new(link_preview::SystemImages),
+    )?;
     watcher::spawn(ctx)?;
     Ok(())
 }
@@ -174,6 +188,7 @@ pub fn run() {
             commands::list_clips,
             commands::get_clip_text,
             commands::get_clip_thumbnail,
+            commands::get_link_image,
             commands::paste_clip,
             commands::paste_clips,
             commands::open_accessibility_settings,

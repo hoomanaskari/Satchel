@@ -29,15 +29,29 @@ tauri-plugin-global-shortcut = "2"
 # Already in the dependency tree (tray-icon/muda). Streaming decode lets the
 # thumbnailer downscale huge images row by row without a full RGBA buffer.
 png = "0.18"
+# Link previews (`link_preview/http.rs`), the only network code, used only
+# when "Show link previews" is on. Small blocking HTTP/1.1 client: rustls
+# with the bundled Mozilla roots (no OpenSSL, no system keychain), gzip.
+# No cookie store, no JSON, no proxy support compiled in beyond what is
+# switched off at run time. Its resolver hook lets every resolved address be
+# checked before connecting. Not the Tauri HTTP plugin: nothing is exposed
+# to the web view.
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 # macOS: these crates are already pulled in by tao/wry; listing them here only
 # enables the AppKit classes Satchel calls directly.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+# Already in the tree (objc2-app-kit / tao). The menu bar animation's
+# NSTimer takes a block.
+block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
   "std",
   "NSArray",
+  "block2",
   "NSBundle",
+  # NSTimer interval (NSTimeInterval).
+  "NSDate",
   "NSData",
   "NSDictionary",
   "NSFileManager",
@@ -45,7 +59,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSURL",
   "NSValue",
   "NSObject",
+  "NSObjCRuntime",
   "NSGeometry",
+  # The menu bar animation's frame timer.
+  "NSRunLoop",
+  "NSTimer",
 ] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "std",
@@ -60,6 +78,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSColor",
   "NSColorSpace",
   "NSControl",
+  # The mouse location, to open the settings window on the display in use.
+  "NSEvent",
   "NSGlassEffectView",
   "NSGraphics",
   # App icons for the excluded-apps picker, and its "Choose…" open panel.
@@ -74,6 +94,9 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSResponder",
   "NSRunningApplication",
   "NSScreen",
+  # The menu bar icon, animated when a clip is saved.
+  "NSStatusBarButton",
+  "NSStatusItem",
   "NSView",
   "NSWindow",
   "NSWorkspace",

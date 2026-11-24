@@ -8,7 +8,7 @@ use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions, NSAlertStyle, NSApplication, NSApplicationActivationOptions,
-    NSGlassEffectView, NSGlassEffectViewStyle, NSPanel, NSResponder, NSRunningApplication, NSStatusWindowLevel, NSView,
+    NSEvent, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel, NSResponder, NSRunningApplication, NSScreen, NSStatusWindowLevel, NSView,
     NSWindow, NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_core_graphics::{
@@ -230,6 +230,115 @@ pub fn show_panel(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void, webv
     }
 }
 
+/// A window frame in AppKit screen coordinates (points, y up): x, y,
+/// width, height. Plain numbers so `shelf.rs` can keep one without AppKit
+/// types.
+pub type Frame = (f64, f64, f64, f64);
+
+fn to_rect(f: Frame) -> NSRect {
+    NSRect::new(NSPoint::new(f.0, f.1), NSSize::new(f.2, f.3))
+}
+
+/// The shelf window's current frame.
+pub fn window_frame(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void) -> Option<Frame> {
+    if ns_window.is_null() {
+        return None;
+    }
+    // SAFETY: main thread, live NSWindow pointer of the shelf.
+    let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
+    let r = window.frame();
+    Some((r.origin.x, r.origin.y, r.size.width, r.size.height))
+}
+
+/// Whether "Reduce motion" is on (System Settings > Accessibility > Display).
+/// `SATCHEL_REDUCE_MOTION` forces it (to check the path without changing the
+/// system setting).
+pub fn reduce_motion() -> bool {
+    if std::env::var_os("SATCHEL_REDUCE_MOTION").is_some() {
+        return true;
+    }
+    let workspace = NSWorkspace::sharedWorkspace();
+    // SAFETY: documented BOOL property of NSWorkspace (macOS 10.10+); the
+    // binding sits behind a feature this crate does not otherwise need.
+    unsafe { msg_send![&*workspace, accessibilityDisplayShouldReduceMotion] }
+}
+
+/// Moves the whole window to `frame` and fades it to `alpha` over `duration`
+/// seconds along the cubic Bézier `curve` (CSS `cubic-bezier` control
+/// points), through AppKit's window animator: the window server moves the
+/// window as one surface, so the native glass, the web content and the
+/// panel's shadow can never drift apart. A new call replaces an animation in
+/// flight and starts from wherever the window is, so a reversal is smooth.
+/// `duration` 0 jumps there at once (and cancels a running animation).
+/// Never blocks: the animation runs on the main run loop.
+pub fn animate_window(
+    _mtm: MainThreadMarker,
+    ns_window: *mut std::ffi::c_void,
+    frame: Frame,
+    alpha: f64,
+    duration: f64,
+    curve: [f32; 4],
+) {
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: main thread, live NSWindow pointer of the shelf.
+    let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
+    let (Some(context_class), Some(timing_class)) =
+        (AnyClass::get(c"NSAnimationContext"), AnyClass::get(c"CAMediaTimingFunction"))
+    else {
+        window.setFrame_display(to_rect(frame), false);
+        window.setAlphaValue(alpha);
+        return;
+    };
+    // SAFETY: documented class methods and properties of NSAnimationContext,
+    // CAMediaTimingFunction and NSWindow's animator proxy (an
+    // NSAnimatablePropertyContainer whose `frame` and `alphaValue` animate),
+    // with their declared argument types (NSTimeInterval/CGFloat are f64,
+    // the control points are float), on the main thread.
+    unsafe {
+        let _: () = msg_send![context_class, beginGrouping];
+        let context: *mut AnyObject = msg_send![context_class, currentContext];
+        let _: () = msg_send![context, setDuration: duration];
+        // `functionWithControlPoints::::` has unlabelled arguments, which
+        // `msg_send!` cannot spell.
+        let timing: *mut AnyObject = objc2::runtime::MessageReceiver::send_message(
+            timing_class,
+            objc2::sel!(functionWithControlPoints::::),
+            (curve[0], curve[1], curve[2], curve[3]),
+        );
+        let _: () = msg_send![context, setTimingFunction: timing];
+        let animator: *mut AnyObject = msg_send![window, animator];
+        let _: () = msg_send![animator, setFrame: to_rect(frame), display: false];
+        let _: () = msg_send![animator, setAlphaValue: alpha];
+        let _: () = msg_send![context_class, endGrouping];
+    }
+}
+
+/// Tells the shelf's WKWebView to treat its window as visible whenever it is
+/// ordered in, even while it sits below the screen at the start of a
+/// slide-in. By default WebKit stops painting a page whose window macOS
+/// reports as occluded, and only resumes some frames after the window comes
+/// on screen, so the panel would slide up empty. `_setWindowOcclusionDetectionEnabled:`
+/// is WebKit SPI (used by Safari and others); without it nothing breaks,
+/// the content just appears a little late.
+pub fn keep_painting_off_screen(_mtm: MainThreadMarker, webview: *mut std::ffi::c_void) {
+    if webview.is_null() {
+        return;
+    }
+    // SAFETY: `webview` is the shelf's live WKWebView, on the main thread.
+    let view: &AnyObject = unsafe { &*webview.cast::<AnyObject>() };
+    let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
+    // SAFETY: NSObject's respondsToSelector:, then the selector it confirmed,
+    // which takes one BOOL.
+    unsafe {
+        let responds: bool = msg_send![view, respondsToSelector: sel];
+        if responds {
+            let _: () = msg_send![view, _setWindowOcclusionDetectionEnabled: false];
+        }
+    }
+}
+
 /// Tag window-vibrancy (used by Tauri's window effects) gives its
 /// NSVisualEffectView (`NS_VIEW_TAG_BLUR_VIEW` in window-vibrancy 0.8).
 const VIBRANCY_VIEW_TAG: isize = 91_376_254;
@@ -337,6 +446,46 @@ pub fn app_is_active(mtm: MainThreadMarker) -> bool {
 /// Gives up being the active app; the system activates the next one.
 pub fn deactivate(mtm: MainThreadMarker) {
     NSApplication::sharedApplication(mtm).deactivate();
+}
+
+/// Every display as (frame, visible frame) in AppKit screen coordinates, the
+/// main display (with the menu bar) first. The visible frame leaves out the
+/// menu bar and the Dock.
+pub fn displays(mtm: MainThreadMarker) -> Vec<(Frame, Frame)> {
+    let from = |r: NSRect| (r.origin.x, r.origin.y, r.size.width, r.size.height);
+    NSScreen::screens(mtm)
+        .iter()
+        .map(|screen| (from(screen.frame()), from(screen.visibleFrame())))
+        .collect()
+}
+
+/// The mouse pointer, in AppKit screen coordinates.
+pub fn mouse_location(_mtm: MainThreadMarker) -> (f64, f64) {
+    let p = NSEvent::mouseLocation();
+    (p.x, p.y)
+}
+
+/// Moves and resizes a window (frame in AppKit screen coordinates).
+pub fn set_window_frame(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void, frame: Frame) {
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: main thread, live NSWindow pointer of a Tauri window.
+    let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
+    window.setFrame_display(to_rect(frame), true);
+}
+
+/// Keeps a resizable window out of full screen (the green button zooms
+/// instead, and the "Enter Full Screen" command does nothing).
+pub fn disallow_full_screen(_mtm: MainThreadMarker, ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: main thread, live NSWindow pointer of a Tauri window.
+    let window: &NSWindow = unsafe { &*ns_window.cast::<NSWindow>() };
+    let behavior = (window.collectionBehavior() - NSWindowCollectionBehavior::FullScreenPrimary)
+        | NSWindowCollectionBehavior::FullScreenNone;
+    window.setCollectionBehavior(behavior);
 }
 
 /// Modal confirmation. Satchel is an accessory app, so it activates itself

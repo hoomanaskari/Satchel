@@ -32,6 +32,7 @@ function clip(over: Partial<ClipSummary> = {}): ClipSummary {
     byteSize: 5,
     hasThumbnail: false,
     pinboardIds: [],
+    linkPreview: null,
     ...over,
   };
 }
@@ -101,7 +102,7 @@ describe("kindLabel", () => {
 
 describe("cardPreview", () => {
   it("text: body is the preview, title becomes the heading", () => {
-    expect(cardPreview(clip({ preview: "a\nb" }))).toEqual({ head: null, body: "a\nb", mono: false, swatch: null });
+    expect(cardPreview(clip({ preview: "a\nb" }))).toEqual({ head: null, body: "a\nb", mono: false, swatch: null, link: null });
     expect(cardPreview(clip({ title: "Sig", preview: "x" }))).toMatchObject({ head: "Sig", body: "x" });
   });
 
@@ -114,6 +115,42 @@ describe("cardPreview", () => {
     expect(cardPreview(l)).toMatchObject({ head: "sqlite.org", body: "sqlite.org/fts5.html" });
     expect(cardPreview({ ...l, title: "FTS5" })).toMatchObject({ head: "FTS5", body: "sqlite.org/fts5.html" });
     expect(cardPreview(clip({ kind: "link", preview: "not a url" }))).toMatchObject({ head: null, body: "not a url" });
+  });
+
+  it("link without a preview (setting off, pending, skipped or failed) looks as before", () => {
+    const l = clip({ kind: "link", preview: "https://www.sqlite.org/fts5.html" });
+    expect(cardPreview(l).link).toBeNull();
+  });
+
+  it("link with a preview: page title over site and host, image kind passed through", () => {
+    const l = clip({
+      kind: "link",
+      preview: "https://www.nytimes.com/2024/05/01/world/story.html",
+      linkPreview: { title: "A Story", site: "The New York Times", image: "photo" },
+    });
+    expect(cardPreview(l)).toMatchObject({
+      head: "A Story",
+      body: "The New York Times · nytimes.com",
+      link: { image: "photo", site: "The New York Times", host: "nytimes.com" },
+    });
+    // The user's own title wins; a site equal to the host is not repeated.
+    const own = { ...l, title: "Read later", linkPreview: { title: "A Story", site: "nytimes.com", image: "icon" as const } };
+    expect(cardPreview(own)).toMatchObject({ head: "Read later", body: "nytimes.com", link: { image: "icon" } });
+    // No page title: the host is the heading; an empty site falls back to the host.
+    const bare = { ...l, linkPreview: { title: null, site: " ", image: null } };
+    expect(cardPreview(bare)).toMatchObject({ head: "nytimes.com", body: "nytimes.com", link: { image: null, site: "nytimes.com" } });
+    // A preview on something that is not a web URL is ignored.
+    expect(cardPreview({ ...l, preview: "not a url" }).link).toBeNull();
+  });
+
+  it("previewed links are labelled by title and site for screen readers", () => {
+    const l = clip({
+      kind: "link",
+      preview: "https://www.nytimes.com/x",
+      linkPreview: { title: "A Story", site: "The New York Times", image: "photo" },
+    });
+    expect(cardLabel(l, NOW)).toBe("Link, A Story, The New York Times · nytimes.com, from Notes, Now");
+    expect(cardLabel(clip({ kind: "link", preview: "https://www.nytimes.com/x" }), NOW)).toBe("Link, nytimes.com, from Notes, Now");
   });
 
   it("code is monospace", () => {

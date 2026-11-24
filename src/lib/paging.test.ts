@@ -16,6 +16,7 @@ function clip(id: number): ClipSummary {
     lastUsedAt: id * 10,
     byteSize: 1,
     hasThumbnail: false,
+    linkPreview: null,
     pinboardIds: [],
   };
 }

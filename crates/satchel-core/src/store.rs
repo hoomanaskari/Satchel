@@ -11,6 +11,11 @@
 //!   in sync, and FTS5 `secure-delete` really removes a deleted clip's terms
 //!   (a contentless table would only tombstone them).
 //! - `pinboards`, `clip_pins`, `settings`, `excluded_apps`.
+//! - `link_previews` (one row per link clip queued for a preview: its state
+//!   and the page's title and site) and `link_preview_images` (the PNG).
+//!   Both cascade from `clips`, so a preview lives exactly as long as its
+//!   clip. A preview's title is part of the clip's indexed title, so search
+//!   finds links by their page title.
 //!
 //! Dedup uses a SHA-256 of the payload behind a unique index.
 
@@ -26,8 +31,9 @@ use sha2::{Digest, Sha256};
 use crate::classify;
 use crate::error::{Error, Result};
 use crate::model::{
-    ClipContent, ClipId, ClipKind, ClipSummary, InsertOutcome, MAX_IMAGE_BYTES, MAX_TEXT_BYTES,
-    Millis, NewClip, PREVIEW_CHARS, Pinboard, PinboardId, Query, Settings, SourceApp,
+    ClipContent, ClipId, ClipKind, ClipSummary, InsertOutcome, LinkImageKind, LinkPreview,
+    LinkPreviewJob, LinkPreviewOutcome, MAX_IMAGE_BYTES, MAX_TEXT_BYTES, Millis, NewClip,
+    PREVIEW_CHARS, Pinboard, PinboardId, Query, Settings, SourceApp,
 };
 
 /// Schema version written to `PRAGMA user_version`: the number of applied
@@ -47,7 +53,111 @@ const DAY_MS: i64 = 86_400_000;
 
 /// Ordered, append-only list of migrations. Never edit a released entry; add
 /// a new one. Entry `i` moves the schema from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
+const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3];
+
+/// Indexed `title` of a clip: its own title and its link preview's title.
+/// Every trigger below must compute it exactly like the view does.
+macro_rules! fts_title {
+    ($clip_title:literal, $preview_title:literal) => {
+        concat!(
+            "CASE WHEN ", $preview_title, " IS NULL THEN ", $clip_title,
+            " WHEN ", $clip_title, " IS NULL THEN ", $preview_title,
+            " ELSE ", $clip_title, " || ' ' || ", $preview_title, " END"
+        )
+    };
+}
+
+/// Link previews. The search view and triggers are rebuilt to include the
+/// preview title; for every existing clip (no preview yet) the indexed
+/// values are unchanged, so the index needs no rebuild.
+///
+/// Invariant kept by `Store`: a `link_previews` row is inserted with a NULL
+/// title and its title only changes by UPDATE (re-indexed by a trigger);
+/// rows are removed by the cascade from `clips` (whose delete trigger has
+/// already removed the indexed title) or after their title was set to NULL.
+const MIGRATION_3: &str = concat!(
+    r#"
+CREATE TABLE link_previews (
+    clip_id         INTEGER PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+    -- 0 pending, 1 ready, 2 failed, 3 skipped (never fetched).
+    status          INTEGER NOT NULL,
+    title           TEXT,
+    site            TEXT,
+    -- NULL none, 0 photo, 1 icon.
+    image_kind      INTEGER,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    fetched_at      INTEGER
+) STRICT;
+CREATE INDEX link_previews_due ON link_previews(status, next_attempt_at);
+
+CREATE TABLE link_preview_images (
+    clip_id INTEGER PRIMARY KEY REFERENCES link_previews(clip_id) ON DELETE CASCADE,
+    png     BLOB NOT NULL
+) STRICT;
+
+DROP TRIGGER clip_data_after_insert;
+DROP TRIGGER clips_before_delete;
+DROP TRIGGER clips_after_title_update;
+DROP VIEW clips_fts_source;
+
+CREATE VIEW clips_fts_source AS
+    SELECT c.id AS id,
+           COALESCE(d.search_body, d.text, '') AS body,
+           "#, fts_title!("c.title", "lp.title"), r#" AS title,
+           c.app_name AS app
+    FROM clips c JOIN clip_data d ON d.clip_id = c.id
+    LEFT JOIN link_previews lp ON lp.clip_id = c.id;
+
+CREATE TRIGGER clip_data_after_insert AFTER INSERT ON clip_data BEGIN
+    INSERT INTO clips_fts (rowid, body, title, app)
+    SELECT new.clip_id, COALESCE(new.search_body, new.text, ''), "#,
+    fts_title!("c.title", "lp.title"), r#", c.app_name
+    FROM clips c LEFT JOIN link_previews lp ON lp.clip_id = c.id WHERE c.id = new.clip_id;
+END;
+
+CREATE TRIGGER clips_before_delete BEFORE DELETE ON clips BEGIN
+    INSERT INTO clips_fts (clips_fts, rowid, body, title, app)
+    SELECT 'delete', old.id, COALESCE(d.search_body, d.text, ''), "#,
+    fts_title!("old.title", "lp.title"), r#", old.app_name
+    FROM clip_data d LEFT JOIN link_previews lp ON lp.clip_id = d.clip_id WHERE d.clip_id = old.id;
+END;
+
+CREATE TRIGGER clips_after_title_update AFTER UPDATE OF title ON clips BEGIN
+    INSERT INTO clips_fts (clips_fts, rowid, body, title, app)
+    SELECT 'delete', old.id, COALESCE(d.search_body, d.text, ''), "#,
+    fts_title!("old.title", "lp.title"), r#", old.app_name
+    FROM clip_data d LEFT JOIN link_previews lp ON lp.clip_id = d.clip_id WHERE d.clip_id = old.id;
+    INSERT INTO clips_fts (rowid, body, title, app)
+    SELECT new.id, COALESCE(d.search_body, d.text, ''), "#,
+    fts_title!("new.title", "lp.title"), r#", new.app_name
+    FROM clip_data d LEFT JOIN link_previews lp ON lp.clip_id = d.clip_id WHERE d.clip_id = new.id;
+END;
+
+CREATE TRIGGER link_previews_after_title_update AFTER UPDATE OF title ON link_previews
+WHEN old.title IS NOT new.title BEGIN
+    INSERT INTO clips_fts (clips_fts, rowid, body, title, app)
+    SELECT 'delete', c.id, COALESCE(d.search_body, d.text, ''), "#,
+    fts_title!("c.title", "old.title"), r#", c.app_name
+    FROM clips c JOIN clip_data d ON d.clip_id = c.id WHERE c.id = old.clip_id;
+    INSERT INTO clips_fts (rowid, body, title, app)
+    SELECT c.id, COALESCE(d.search_body, d.text, ''), "#,
+    fts_title!("c.title", "new.title"), r#", c.app_name
+    FROM clips c JOIN clip_data d ON d.clip_id = c.id WHERE c.id = new.clip_id;
+END;
+"#
+);
+
+/// Attempts before a link preview that keeps failing transiently is given
+/// up (`Retry` outcomes; other failures are final at once).
+pub const LINK_PREVIEW_ATTEMPTS: u32 = 3;
+/// Preview images above this size are not stored (the app makes them far
+/// smaller).
+const MAX_LINK_IMAGE_BYTES: usize = 512 * 1024;
+const LINK_PENDING: i64 = 0;
+const LINK_READY: i64 = 1;
+const LINK_FAILED: i64 = 2;
+const LINK_SKIPPED: i64 = 3;
 
 /// RTF flavor of text clips (rich text from TextEdit, Notes, Pages...).
 const MIGRATION_2: &str = "ALTER TABLE clip_data ADD COLUMN rtf BLOB;";
@@ -146,7 +256,11 @@ CREATE TABLE excluded_apps (
 
 const SUMMARY_COLUMNS: &str = "c.id, c.kind, c.title, c.preview, c.app_id, c.app_name, \
      c.created_at, c.last_used_at, c.byte_size, c.has_thumbnail, \
-     (SELECT group_concat(p.pinboard_id) FROM clip_pins p WHERE p.clip_id = c.id)";
+     (SELECT group_concat(p.pinboard_id) FROM clip_pins p WHERE p.clip_id = c.id), \
+     lp.status, lp.title, lp.site, lp.image_kind";
+
+/// The tables every summary is read from (link previews by primary key).
+const SUMMARY_FROM: &str = "clips c LEFT JOIN link_previews lp ON lp.clip_id = c.id";
 
 const NOT_PINNED: &str = "NOT EXISTS (SELECT 1 FROM clip_pins p WHERE p.clip_id = clips.id)";
 
@@ -551,6 +665,7 @@ impl Store {
                 ("capture_paused", Value::Integer(v)) => s.capture_paused = v != 0,
                 ("capture_images", Value::Integer(v)) => s.capture_images = v != 0,
                 ("paste_on_select", Value::Integer(v)) => s.paste_on_select = v != 0,
+                ("link_previews", Value::Integer(v)) => s.link_previews = v != 0,
                 ("shelf_shortcut", Value::Text(v)) => s.shelf_shortcut = v,
                 ("excluded_app_ids", Value::Integer(_)) => has_exclusions = true,
                 _ => {} // unknown or malformed: keep the default
@@ -588,6 +703,7 @@ impl Store {
             put.execute(params!["capture_paused", settings.capture_paused])?;
             put.execute(params!["capture_images", settings.capture_images])?;
             put.execute(params!["paste_on_select", settings.paste_on_select])?;
+            put.execute(params!["link_previews", settings.link_previews])?;
             put.execute(params!["shelf_shortcut", settings.shelf_shortcut])?;
             put.execute(params![
                 "excluded_app_ids",
@@ -603,6 +719,195 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Native window state (such as the settings window's frame), kept apart
+    /// from `Settings`: it lives in the `settings` table under a `window.`
+    /// key, which `settings()` ignores and `save_settings()` never writes.
+    pub fn window_state(&self, name: &str) -> Result<Option<String>> {
+        let value: Option<Value> = self
+            .conn
+            .prepare_cached("SELECT value FROM settings WHERE key = ?1")?
+            .query_row([format!("window.{name}")], |r| r.get(0))
+            .optional()?;
+        Ok(match value {
+            Some(Value::Text(v)) => Some(v),
+            _ => None,
+        })
+    }
+
+    pub fn save_window_state(&mut self, name: &str, value: &str) -> Result<()> {
+        if name.len() > 64 || value.len() > 4096 {
+            return Err(Error::Invalid("window state too large".into()));
+        }
+        self.conn
+            .prepare_cached(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            )?
+            .execute(params![format!("window.{name}"), value])?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------ link previews
+
+    /// Queues a link clip for a preview, due at `now`. Returns false (and
+    /// changes nothing) when the clip is not a link or already has a preview
+    /// row in any state: a link is fetched at most once.
+    pub fn queue_link_preview(&mut self, id: ClipId, now: Millis) -> Result<bool> {
+        let n = self
+            .conn
+            .prepare_cached(
+                "INSERT OR IGNORE INTO link_previews (clip_id, status, next_attempt_at) \
+                 SELECT id, ?3, ?2 FROM clips WHERE id = ?1 AND kind = ?4",
+            )?
+            .execute(params![id, now, LINK_PENDING, kind_code(ClipKind::Link)])?;
+        Ok(n > 0)
+    }
+
+    /// Queues the most recently used link clip that has no preview row yet
+    /// (the backfill for links copied before previews were on, one at a
+    /// time; the caller paces it). Returns the clip, or `None` when every
+    /// link clip already has a row.
+    pub fn queue_link_backfill(&mut self, now: Millis) -> Result<Option<ClipId>> {
+        let id: Option<ClipId> = self
+            .conn
+            .prepare_cached(
+                "INSERT INTO link_previews (clip_id, status, next_attempt_at) \
+                 SELECT c.id, ?2, ?1 FROM clips c WHERE c.kind = ?3 \
+                 AND NOT EXISTS (SELECT 1 FROM link_previews lp WHERE lp.clip_id = c.id) \
+                 ORDER BY c.last_used_at DESC, c.id DESC LIMIT 1 RETURNING clip_id",
+            )?
+            .query_row(params![now, LINK_PENDING, kind_code(ClipKind::Link)], |r| r.get(0))
+            .optional()?;
+        Ok(id)
+    }
+
+    /// Claims the pending preview that is due first (`next_attempt_at <=
+    /// now`), postponing it by `lease_ms` so no other worker takes it while
+    /// it is fetched. A worker that dies mid-fetch leaves it to be retried
+    /// when the lease ends.
+    pub fn claim_link_preview(&mut self, now: Millis, lease_ms: Millis) -> Result<Option<LinkPreviewJob>> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let job = tx
+            .prepare_cached(
+                "SELECT lp.clip_id, lp.attempts, d.text, c.app_id FROM link_previews lp \
+                 JOIN clips c ON c.id = lp.clip_id JOIN clip_data d ON d.clip_id = lp.clip_id \
+                 WHERE lp.status = ?1 AND lp.next_attempt_at <= ?2 \
+                 ORDER BY lp.next_attempt_at, lp.clip_id LIMIT 1",
+            )?
+            .query_row(params![LINK_PENDING, now], |r| {
+                Ok(LinkPreviewJob {
+                    clip_id: r.get(0)?,
+                    attempts: r.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
+                    url: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    source_app_id: r.get(3)?,
+                })
+            })
+            .optional()?;
+        if let Some(j) = &job {
+            tx.prepare_cached("UPDATE link_previews SET next_attempt_at = ?2 WHERE clip_id = ?1")?
+                .execute(params![j.clip_id, now.saturating_add(lease_ms)])?;
+        }
+        tx.commit()?;
+        Ok(job)
+    }
+
+    /// When the next pending preview is due, if any is pending.
+    pub fn next_link_preview_at(&self) -> Result<Option<Millis>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT MIN(next_attempt_at) FROM link_previews WHERE status = ?1")?
+            .query_row([LINK_PENDING], |r| r.get(0))?)
+    }
+
+    /// Records how a claimed preview ended. Only a pending row changes, so a
+    /// result that arrives after the clip was deleted or previews were
+    /// cleared is dropped. Returns true when a preview became ready.
+    ///
+    /// Titles and site names are capped like the core's parser caps them;
+    /// an image over 512 KiB is dropped (the preview is kept without it).
+    pub fn finish_link_preview(&mut self, id: ClipId, outcome: LinkPreviewOutcome, now: Millis) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let attempts: Option<i64> = tx
+            .prepare_cached("SELECT attempts FROM link_previews WHERE clip_id = ?1 AND status = ?2")?
+            .query_row(params![id, LINK_PENDING], |r| r.get(0))
+            .optional()?;
+        let Some(attempts) = attempts else {
+            return Ok(false);
+        };
+        let attempts = attempts.saturating_add(1);
+        let mut ready = false;
+        match outcome {
+            LinkPreviewOutcome::Ready(p) => {
+                let title = p.title.map(|t| cap_chars(&t, crate::link::MAX_TITLE_CHARS + 1)).filter(|t| !t.trim().is_empty());
+                let site = cap_chars(&p.site, crate::link::MAX_SITE_CHARS + 1);
+                let image = p.image.filter(|(_, png)| !png.is_empty() && png.len() <= MAX_LINK_IMAGE_BYTES);
+                let kind = image.as_ref().map(|(k, _)| match k {
+                    LinkImageKind::Photo => 0i64,
+                    LinkImageKind::Icon => 1,
+                });
+                // Re-indexed by `link_previews_after_title_update`.
+                tx.prepare_cached(
+                    "UPDATE link_previews SET status = ?2, title = ?3, site = ?4, image_kind = ?5, \
+                     attempts = ?6, fetched_at = ?7 WHERE clip_id = ?1",
+                )?
+                .execute(params![id, LINK_READY, title, site, kind, attempts, now])?;
+                if let Some((_, png)) = image {
+                    tx.prepare_cached("INSERT OR REPLACE INTO link_preview_images (clip_id, png) VALUES (?1, ?2)")?
+                        .execute(params![id, png])?;
+                }
+                ready = true;
+            }
+            LinkPreviewOutcome::Retry { retry_at } if attempts < i64::from(LINK_PREVIEW_ATTEMPTS) => {
+                tx.prepare_cached("UPDATE link_previews SET attempts = ?2, next_attempt_at = ?3 WHERE clip_id = ?1")?
+                    .execute(params![id, attempts, retry_at])?;
+            }
+            LinkPreviewOutcome::Retry { .. } | LinkPreviewOutcome::Failed => {
+                tx.prepare_cached("UPDATE link_previews SET status = ?2, attempts = ?3, fetched_at = ?4 WHERE clip_id = ?1")?
+                    .execute(params![id, LINK_FAILED, attempts, now])?;
+            }
+            LinkPreviewOutcome::Skipped => {
+                tx.prepare_cached("UPDATE link_previews SET status = ?2 WHERE clip_id = ?1")?
+                    .execute(params![id, LINK_SKIPPED])?;
+            }
+        }
+        tx.commit()?;
+        Ok(ready)
+    }
+
+    /// The PNG of a ready preview.
+    pub fn link_preview_image(&self, id: ClipId) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT i.png FROM link_preview_images i JOIN link_previews lp ON lp.clip_id = i.clip_id \
+                 WHERE i.clip_id = ?1 AND lp.status = ?2",
+            )?
+            .query_row(params![id, LINK_READY], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// Deletes every link preview (and the queue), e.g. when the setting is
+    /// turned off. Like `delete`, nothing lingers in the files. Returns the
+    /// number of previews removed.
+    pub fn clear_link_previews(&mut self) -> Result<u64> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Titles first, so the trigger takes them out of the search index.
+        tx.prepare_cached("UPDATE link_previews SET title = NULL WHERE title IS NOT NULL")?
+            .execute([])?;
+        let n = tx.prepare_cached("DELETE FROM link_previews")?.execute([])?;
+        tx.commit()?;
+        if n > 0 {
+            self.checkpoint()?;
+        }
+        Ok(n as u64)
     }
 
     /// Fold the WAL into the main file and truncate it. A no-op in memory.
@@ -882,6 +1187,13 @@ fn decode_paths(blob: Option<&[u8]>) -> Vec<String> {
     }
 }
 
+fn cap_chars(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s.to_string(),
+    }
+}
+
 fn valid_pinboard_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_PINBOARD_NAME_CHARS {
@@ -928,7 +1240,7 @@ struct ListFilters {
 /// cached statement and query plan. Only static fragments are concatenated;
 /// every value is a bound parameter.
 fn list_sql(f: ListFilters) -> String {
-    let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM clips c WHERE 1");
+    let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM {SUMMARY_FROM} WHERE 1");
     if f.text {
         sql.push_str(" AND c.id IN (SELECT rowid FROM clips_fts WHERE clips_fts MATCH :q)");
     }
@@ -948,7 +1260,7 @@ fn list_sql(f: ListFilters) -> String {
 // ----------------------------------------------------------- row maps
 
 fn summary_of(conn: &Connection, id: ClipId) -> Result<Option<ClipSummary>> {
-    let sql = format!("SELECT {SUMMARY_COLUMNS} FROM clips c WHERE c.id = ?1");
+    let sql = format!("SELECT {SUMMARY_COLUMNS} FROM {SUMMARY_FROM} WHERE c.id = ?1");
     Ok(conn
         .prepare_cached(&sql)?
         .query_row([id], summary_from_row)
@@ -980,6 +1292,18 @@ fn summary_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ClipSummary> {
         byte_size: r.get::<_, i64>(8)?.max(0) as u64,
         has_thumbnail: r.get(9)?,
         pinboard_ids,
+        link_preview: match r.get::<_, Option<i64>>(11)? {
+            Some(LINK_READY) => Some(LinkPreview {
+                title: r.get(12)?,
+                site: r.get::<_, Option<String>>(13)?.unwrap_or_default(),
+                image: match r.get::<_, Option<i64>>(14)? {
+                    Some(0) => Some(LinkImageKind::Photo),
+                    Some(1) => Some(LinkImageKind::Icon),
+                    _ => None,
+                },
+            }),
+            _ => None,
+        },
     })
 }
 
@@ -1118,6 +1442,16 @@ mod tests {
     }
 
     #[test]
+    fn list_never_reads_preview_images() {
+        let s = Store::open_in_memory().unwrap();
+        for bits in 0u8..16 {
+            let f = ListFilters { text: bits & 1 != 0, kind: bits & 2 != 0, pinboard: bits & 4 != 0, before: bits & 8 != 0 };
+            let p = plan(&s, f);
+            assert!(!p.contains("link_preview_images"), "{f:?} reads preview images:\n{p}");
+        }
+    }
+
+    #[test]
     fn list_never_reads_content_blobs() {
         let s = Store::open_in_memory().unwrap();
         for bits in 0u8..16 {
@@ -1235,6 +1569,31 @@ mod tests {
         )
         .unwrap();
         assert_index_consistent(&s);
+        // Link previews: titles enter and leave the index.
+        let link = |u: &str| NewClip { kind: ClipKind::Link, ..text(u) };
+        let mut links = Vec::new();
+        for (i, u) in ["https://a.example.com/x", "https://b.example.com/y", "https://c.example.com/z"].iter().enumerate() {
+            let (InsertOutcome::Inserted(c) | InsertOutcome::Bumped(c)) = s.insert(link(u), 400 + i as i64).unwrap();
+            assert!(s.queue_link_preview(c.id, 400).unwrap());
+            links.push(c.id);
+        }
+        assert_index_consistent(&s);
+        for &id in &links {
+            let job = s.claim_link_preview(500, 1000).unwrap().unwrap();
+            assert_eq!(job.clip_id, id);
+            let page = crate::model::FetchedPreview { title: Some(format!("Page {id}")), site: "Example".into(), image: None };
+            assert!(s.finish_link_preview(id, LinkPreviewOutcome::Ready(page), 500).unwrap());
+        }
+        assert_index_consistent(&s);
+        s.set_title(links[0], Some("own title")).unwrap();
+        s.set_title(links[0], None).unwrap();
+        assert_index_consistent(&s);
+        assert!(s.delete(links[1]).unwrap());
+        assert_index_consistent(&s);
+        s.pin(links[2], board.id).unwrap();
+        assert_eq!(s.clear_link_previews().unwrap(), 2);
+        assert_index_consistent(&s);
+        s.unpin(links[2], board.id).unwrap();
         s.clear_history().unwrap();
         assert_index_consistent(&s);
         let left: i64 = s

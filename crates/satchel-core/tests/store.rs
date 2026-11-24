@@ -774,6 +774,21 @@ fn pinning_and_membership() {
 // ----------------------------------------------------------- settings
 
 #[test]
+fn window_state_round_trips_apart_from_settings() {
+    let mut s = store();
+    assert_eq!(s.window_state("settings").unwrap(), None);
+    s.save_window_state("settings", "{\"x\":1}").unwrap();
+    s.save_window_state("settings", "{\"x\":2}").unwrap();
+    assert_eq!(s.window_state("settings").unwrap().as_deref(), Some("{\"x\":2}"));
+    assert_eq!(s.window_state("other").unwrap(), None);
+    // Not a setting, and saving settings leaves it alone.
+    assert_eq!(s.settings().unwrap(), Settings::default());
+    s.save_settings(&Settings { max_items: 7, ..Settings::default() }).unwrap();
+    assert_eq!(s.window_state("settings").unwrap().as_deref(), Some("{\"x\":2}"));
+    assert!(s.save_window_state("settings", &"x".repeat(5000)).is_err());
+}
+
+#[test]
 fn settings_default_until_saved_then_round_trip() {
     let mut s = store();
     assert_eq!(s.settings().unwrap(), Settings::default());
@@ -785,6 +800,7 @@ fn settings_default_until_saved_then_round_trip() {
         capture_images: false,
         shelf_shortcut: "Alt+Space".into(),
         paste_on_select: false,
+        link_previews: true,
     };
     s.save_settings(&custom).unwrap();
     assert_eq!(s.settings().unwrap(), custom);
@@ -856,4 +872,224 @@ fn rich_flavors_are_dropped_when_oversized_or_not_text() {
     let i = insert(&mut s, img, 2);
     let c = s.content(i.id).unwrap().unwrap();
     assert_eq!((c.rtf, c.html), (None, None));
+}
+
+// ------------------------------------------------------------ link previews
+
+mod link_previews {
+    use super::*;
+    use satchel_core::{FetchedPreview, LinkImageKind, LinkPreview, LinkPreviewOutcome, store::LINK_PREVIEW_ATTEMPTS};
+
+    fn link(s: &mut Store, url: &str, now: i64) -> i64 {
+        let c = insert(s, text_clip(url), now);
+        assert_eq!(c.kind, ClipKind::Link);
+        c.id
+    }
+
+    fn page(title: &str) -> FetchedPreview {
+        FetchedPreview { title: Some(title.into()), site: "Example".into(), image: Some((LinkImageKind::Photo, vec![1, 2, 3])) }
+    }
+
+    fn summary(s: &Store, id: i64) -> satchel_core::ClipSummary {
+        s.summary(id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_link_is_queued_claimed_and_cached_once() {
+        let mut s = store();
+        let id = link(&mut s, "https://www.example.com/a", 1);
+        assert_eq!(summary(&s, id).link_preview, None);
+        assert!(s.queue_link_preview(id, 10).unwrap());
+        assert!(!s.queue_link_preview(id, 11).unwrap(), "queued once");
+        assert_eq!(s.next_link_preview_at().unwrap(), Some(10));
+        assert!(s.claim_link_preview(9, 1000).unwrap().is_none(), "not due yet");
+
+        let job = s.claim_link_preview(10, 1000).unwrap().unwrap();
+        assert_eq!(job.clip_id, id);
+        assert_eq!(job.url, "https://www.example.com/a");
+        assert_eq!(job.source_app_id.as_deref(), Some("com.apple.Safari"));
+        assert_eq!(job.attempts, 0);
+        assert!(s.claim_link_preview(10, 1000).unwrap().is_none(), "leased to the first worker");
+
+        assert!(s.finish_link_preview(id, LinkPreviewOutcome::Ready(page("A page")), 20).unwrap());
+        assert_eq!(
+            summary(&s, id).link_preview,
+            Some(LinkPreview { title: Some("A page".into()), site: "Example".into(), image: Some(LinkImageKind::Photo) })
+        );
+        assert_eq!(s.link_preview_image(id).unwrap(), Some(vec![1, 2, 3]));
+        assert_eq!(s.next_link_preview_at().unwrap(), None);
+        // Copying the same link again does not fetch again.
+        let again = link(&mut s, "https://www.example.com/a", 30);
+        assert_eq!(again, id);
+        assert!(!s.queue_link_preview(id, 30).unwrap());
+        assert!(s.list(&Query::default()).unwrap()[0].link_preview.is_some());
+    }
+
+    #[test]
+    fn only_link_clips_are_queued() {
+        let mut s = store();
+        let t = insert(&mut s, text_clip("just some words"), 1).id;
+        assert!(!s.queue_link_preview(t, 1).unwrap());
+        assert!(!s.queue_link_preview(999, 1).unwrap());
+        assert!(s.claim_link_preview(i64::MAX, 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn transient_failures_back_off_then_give_up() {
+        let mut s = store();
+        let id = link(&mut s, "https://www.example.com/flaky", 1);
+        s.queue_link_preview(id, 0).unwrap();
+        let mut now = 0;
+        for attempt in 0..LINK_PREVIEW_ATTEMPTS {
+            let job = s.claim_link_preview(now, 100).unwrap().expect("due");
+            assert_eq!(job.attempts, attempt);
+            now += 1000;
+            assert!(!s.finish_link_preview(id, LinkPreviewOutcome::Retry { retry_at: now }, now).unwrap());
+        }
+        assert!(s.claim_link_preview(i64::MAX, 1).unwrap().is_none(), "given up");
+        assert_eq!(summary(&s, id).link_preview, None);
+        assert!(!s.queue_link_preview(id, now).unwrap(), "a failed link is not queued again");
+    }
+
+    #[test]
+    fn failed_and_skipped_are_final_and_invisible() {
+        let mut s = store();
+        let a = link(&mut s, "https://www.example.com/a", 1);
+        let b = link(&mut s, "https://www.example.com/b", 2);
+        s.queue_link_preview(a, 0).unwrap();
+        s.queue_link_preview(b, 0).unwrap();
+        let j = s.claim_link_preview(0, 10).unwrap().unwrap();
+        s.finish_link_preview(j.clip_id, LinkPreviewOutcome::Failed, 0).unwrap();
+        let j = s.claim_link_preview(0, 10).unwrap().unwrap();
+        s.finish_link_preview(j.clip_id, LinkPreviewOutcome::Skipped, 0).unwrap();
+        assert!(s.claim_link_preview(i64::MAX, 1).unwrap().is_none());
+        assert_eq!(summary(&s, a).link_preview, None);
+        assert_eq!(summary(&s, b).link_preview, None);
+        assert_eq!(s.link_preview_image(a).unwrap(), None);
+        // A late result for a finished row changes nothing.
+        assert!(!s.finish_link_preview(a, LinkPreviewOutcome::Ready(page("late")), 5).unwrap());
+        assert_eq!(summary(&s, a).link_preview, None);
+    }
+
+    #[test]
+    fn a_lease_that_runs_out_is_claimed_again() {
+        let mut s = store();
+        let id = link(&mut s, "https://www.example.com/a", 1);
+        s.queue_link_preview(id, 0).unwrap();
+        s.claim_link_preview(0, 100).unwrap().unwrap();
+        assert!(s.claim_link_preview(99, 100).unwrap().is_none());
+        assert_eq!(s.claim_link_preview(100, 100).unwrap().unwrap().clip_id, id);
+    }
+
+    #[test]
+    fn previews_are_searchable_by_title() {
+        let mut s = store();
+        let id = link(&mut s, "https://www.example.com/p/42", 1);
+        s.queue_link_preview(id, 0).unwrap();
+        s.claim_link_preview(0, 10).unwrap();
+        s.finish_link_preview(id, LinkPreviewOutcome::Ready(page("Zebracorn Sightings")), 0).unwrap();
+        assert_eq!(search(&s, "zebrac"), vec![id]);
+        assert_eq!(search(&s, "example"), vec![id], "the URL still matches");
+        s.set_title(id, Some("Mine")).unwrap();
+        assert_eq!(search(&s, "zebracorn mine"), vec![id], "own title and page title");
+        assert_eq!(s.clear_link_previews().unwrap(), 1);
+        assert!(search(&s, "zebracorn").is_empty());
+        assert_eq!(search(&s, "mine"), vec![id]);
+    }
+
+    #[test]
+    fn previews_live_and_die_with_their_clip() {
+        let mut s = store();
+        let ready = |s: &mut Store, url: &str, now: i64| {
+            let id = link(s, url, now);
+            s.queue_link_preview(id, 0).unwrap();
+            let j = s.claim_link_preview(i64::MAX - 1, 0).unwrap().unwrap();
+            assert_eq!(j.clip_id, id);
+            s.finish_link_preview(id, LinkPreviewOutcome::Ready(page(url)), now).unwrap();
+            id
+        };
+        let a = ready(&mut s, "https://www.example.com/a", 1);
+        let b = ready(&mut s, "https://www.example.com/b", 2);
+        let c = ready(&mut s, "https://www.example.com/c", 3);
+        assert!(s.delete(a).unwrap());
+        assert_eq!(s.link_preview_image(a).unwrap(), None);
+        let board = s.create_pinboard("Keep", "#000000").unwrap();
+        s.pin(c, board.id).unwrap();
+        assert_eq!(s.clear_history().unwrap(), 1);
+        assert_eq!(s.link_preview_image(b).unwrap(), None);
+        assert!(s.link_preview_image(c).unwrap().is_some(), "pinned clip keeps its preview");
+        // Re-copying a deleted link makes a new clip, which may be fetched.
+        let a2 = link(&mut s, "https://www.example.com/a", 9);
+        assert!(s.queue_link_preview(a2, 9).unwrap());
+        // Retention pruning removes previews too.
+        s.unpin(c, board.id).unwrap();
+        s.prune(&Settings { retention_days: Some(1), ..Settings::default() }, 10 * 86_400_000).unwrap();
+        assert_eq!(s.link_preview_image(c).unwrap(), None);
+        assert_eq!(s.next_link_preview_at().unwrap(), None);
+    }
+
+    #[test]
+    fn clearing_removes_cache_and_queue() {
+        let mut s = store();
+        let a = link(&mut s, "https://www.example.com/a", 1);
+        let b = link(&mut s, "https://www.example.com/b", 2);
+        s.queue_link_preview(a, 0).unwrap();
+        s.queue_link_preview(b, 0).unwrap();
+        s.claim_link_preview(0, 0).unwrap();
+        s.finish_link_preview(a, LinkPreviewOutcome::Ready(page("A")), 0).unwrap();
+        assert_eq!(s.clear_link_previews().unwrap(), 2);
+        assert_eq!(s.link_preview_image(a).unwrap(), None);
+        assert_eq!(summary(&s, a).link_preview, None);
+        assert_eq!(s.next_link_preview_at().unwrap(), None);
+        // A result arriving after the clear is dropped.
+        assert!(!s.finish_link_preview(b, LinkPreviewOutcome::Ready(page("B")), 0).unwrap());
+        assert_eq!(summary(&s, b).link_preview, None);
+        // Turned on again later, the link can be queued again.
+        assert!(s.queue_link_preview(a, 5).unwrap());
+    }
+
+    #[test]
+    fn stored_text_and_images_are_capped() {
+        let mut s = store();
+        let id = link(&mut s, "https://www.example.com/a", 1);
+        s.queue_link_preview(id, 0).unwrap();
+        s.claim_link_preview(0, 0).unwrap();
+        let big = FetchedPreview {
+            title: Some("t".repeat(10_000)),
+            site: "s".repeat(10_000),
+            image: Some((LinkImageKind::Icon, vec![0; 600 * 1024])),
+        };
+        s.finish_link_preview(id, LinkPreviewOutcome::Ready(big), 0).unwrap();
+        let p = summary(&s, id).link_preview.unwrap();
+        assert!(p.title.unwrap().chars().count() <= 201);
+        assert!(p.site.chars().count() <= 81);
+        assert_eq!(p.image, None, "oversized image dropped");
+        assert_eq!(s.link_preview_image(id).unwrap(), None);
+    }
+
+    #[test]
+    fn the_setting_defaults_on_and_round_trips() {
+        let mut s = store();
+        assert!(s.settings().unwrap().link_previews);
+        s.save_settings(&Settings { link_previews: false, ..Settings::default() }).unwrap();
+        assert!(!s.settings().unwrap().link_previews);
+    }
+
+    #[test]
+    fn backfill_queues_older_links_newest_first_one_at_a_time() {
+        let mut s = store();
+        let old = link(&mut s, "https://www.example.com/old", 1);
+        insert(&mut s, text_clip("plain words"), 2);
+        let newer = link(&mut s, "https://www.example.com/newer", 3);
+        let fresh = link(&mut s, "https://www.example.com/fresh", 4);
+        s.queue_link_preview(fresh, 4).unwrap();
+        assert_eq!(s.queue_link_backfill(10).unwrap(), Some(newer));
+        assert_eq!(s.queue_link_backfill(11).unwrap(), Some(old));
+        assert_eq!(s.queue_link_backfill(12).unwrap(), None, "every link has a row");
+        let due: Vec<i64> = std::iter::from_fn(|| s.claim_link_preview(100, 1000).unwrap().map(|j| j.clip_id)).collect();
+        assert_eq!(due, vec![fresh, newer, old]);
+        // Cleared (setting off), the links are backfill candidates again.
+        s.clear_link_previews().unwrap();
+        assert_eq!(s.queue_link_backfill(20).unwrap(), Some(fresh));
+    }
 }

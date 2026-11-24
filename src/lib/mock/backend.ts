@@ -9,6 +9,7 @@ import type { Transport } from "../ipc";
 import type {
   AppInfo,
   ClipId,
+  LinkPreview,
   ClipKind,
   ClipSummary,
   Cursor,
@@ -37,6 +38,8 @@ interface Sample {
   title?: string;
   pins?: number[];
   bytes?: number;
+  /** A cached link preview (what Rust would have fetched with the setting on). */
+  link?: LinkPreview;
 }
 
 const MIN = 60_000;
@@ -59,21 +62,24 @@ const APPS = {
 
 const SAMPLES: Sample[] = [
   { kind: "text", app: APPS.notes, ago: 0, text: "Ship the clipboard watcher behind a flag first, then turn on image capture once memory use looks sane." },
-  { kind: "link", app: APPS.safari, ago: 2 * MIN, title: "NSPasteboard — Apple Developer", text: "https://developer.apple.com/documentation/appkit/nspasteboard" },
+  { kind: "link", app: APPS.safari, ago: 2 * MIN, text: "https://developer.apple.com/documentation/appkit/nspasteboard", link: { title: "NSPasteboard | Apple Developer Documentation", site: "Apple Developer", image: "icon" } },
+  { kind: "link", app: APPS.safari, ago: 5 * MIN, text: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", link: { title: "Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film", site: "YouTube", image: "photo" } },
+  { kind: "link", app: APPS.mail, ago: 6 * MIN, text: "https://accounts.example.com/reset-password?token=8f14e45fceea167a5a36dedd4bea2543" },
   { kind: "code", app: APPS.xcode, ago: 8 * MIN, pins: [1], text: "let pb = NSPasteboard.general\nif pb.changeCount != last {\n  last = pb.changeCount\n  store(pb.pasteboardItems)\n}" },
   { kind: "color", app: APPS.figma, ago: 14 * MIN, text: "#34C759" },
   { kind: "image", app: APPS.shot, ago: 31 * MIN, text: "", bytes: 412_000 },
   { kind: "text", app: APPS.mail, ago: HR, title: "Email signature", pins: [1], text: "Thanks,\n[YOUR NAME]\n[YOUR ROLE]" },
   { kind: "file", app: APPS.finder, ago: 2 * HR, text: "roadmap-q1.pdf" },
   { kind: "code", app: APPS.terminal, ago: 3 * HR, text: "git log --oneline --graph --decorate -20" },
-  { kind: "link", app: APPS.safari, ago: 26 * HR, title: "Sparkle: updates for Mac apps", text: "https://sparkle-project.org/" },
+  { kind: "link", app: APPS.safari, ago: 26 * HR, title: "Sparkle: updates for Mac apps", text: "https://sparkle-project.org/", link: { title: "Sparkle: open source software update framework for macOS", site: "sparkle-project.org", image: "photo" } },
+  { kind: "link", app: APPS.notes, ago: 27 * HR + 30 * MIN, text: "https://en.wikipedia.org/wiki/Clipboard_(computing)", link: { title: "Clipboard (computing) - Wikipedia", site: "Wikipedia", image: null } },
   { kind: "color", app: APPS.xcode, ago: 27 * HR, text: "#FF9F0A" },
   { kind: "text", app: APPS.slack, ago: 28 * HR, pins: [2], text: "Standup moved to 10:15 tomorrow — same room, bring the latency numbers." },
   { kind: "code", app: APPS.vscode, ago: 29 * HR, text: "const debounced = debounce(() => search(query), 40);\nfield.addEventListener('input', debounced);" },
   { kind: "file", app: APPS.finder, ago: 30 * HR, text: "IMG_2041.HEIC\nIMG_2042.HEIC\nIMG_2043.HEIC" },
   { kind: "text", app: APPS.pages, ago: 2 * DAY, text: "Clipboard history contains passwords and secrets, so the default is to keep less, not more. Concealed pasteboard types are skipped before content is read, and excluded apps are never captured. ".repeat(3).trim() },
   { kind: "image", app: APPS.safari, ago: 2 * DAY + HR, text: "", bytes: 1_840_000 },
-  { kind: "link", app: APPS.slack, ago: 3 * DAY, pins: [2], text: "https://v2.tauri.app/security/csp/" },
+  { kind: "link", app: APPS.slack, ago: 3 * DAY, pins: [2], text: "https://v2.tauri.app/security/csp/", link: { title: "Content Security Policy (CSP)", site: "Tauri", image: "photo" } },
   { kind: "code", app: APPS.terminal, ago: 3 * DAY + HR, text: "cargo test -p satchel-core -- --nocapture" },
   { kind: "color", app: APPS.figma, ago: 4 * DAY, text: "#5E5CE6" },
   { kind: "text", app: APPS.notes, ago: 5 * DAY, text: "<b>Not HTML</b> — clip content is shown as text, so this tag stays visible: <img src=x onerror=alert(1)>" },
@@ -126,9 +132,9 @@ function staticPng(): ArrayBuffer {
   return bytes.buffer;
 }
 
-async function drawThumbnail(seed: number): Promise<ArrayBuffer> {
+async function drawThumbnail(seed: number, width = 320, height = 180): Promise<ArrayBuffer> {
   if (typeof OffscreenCanvas === "undefined") return staticPng();
-  const c = new OffscreenCanvas(320, 180);
+  const c = new OffscreenCanvas(width, height);
   const g = c.getContext("2d");
   if (!g) return staticPng();
   const hue = (seed * 67) % 360;
@@ -219,6 +225,8 @@ function defaultSettings(): Settings {
     captureImages: true,
     shelfShortcut: "CommandOrControl+Shift+V",
     pasteOnSelect: true,
+    // On by default, as in the app.
+    linkPreviews: true,
   };
 }
 
@@ -233,7 +241,12 @@ function isOlder(r: Row, c: Cursor): boolean {
 
 function summary(r: Row): ClipSummary {
   const { text: _text, ...s } = r;
-  return { ...s, sourceApp: s.sourceApp ? { ...s.sourceApp } : null, pinboardIds: [...s.pinboardIds] };
+  return {
+    ...s,
+    sourceApp: s.sourceApp ? { ...s.sourceApp } : null,
+    pinboardIds: [...s.pinboardIds],
+    linkPreview: s.linkPreview ? { ...s.linkPreview } : null,
+  };
 }
 
 export interface MockOptions {
@@ -253,6 +266,8 @@ export interface MockBackend {
   show(): void;
   /** Pretend Satchel does (not) hold the Accessibility permission. */
   setPastePermission(granted: boolean): void;
+  /** Change the pause state without announcing it, as if `settings-changed` were missed. */
+  setPausedSilently(paused: boolean): void;
 }
 
 export function createMockBackend(opts: MockOptions = {}): MockBackend {
@@ -278,6 +293,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       byteSize: s.bytes ?? new TextEncoder().encode(s.text).length,
       hasThumbnail: s.kind === "image",
       pinboardIds: s.pins ? [...s.pins] : [],
+      linkPreview: s.link ? { ...s.link } : null,
     });
   }
   let pinboards: Pinboard[] = [
@@ -311,7 +327,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       .filter((r) => query.pinboardId == null || r.pinboardIds.includes(query.pinboardId))
       .filter((r) => {
         if (!needle) return true;
-        const hay = `${r.text ?? r.preview} ${r.title ?? ""} ${r.sourceApp?.name ?? ""}`.toLowerCase();
+        const hay = `${r.text ?? r.preview} ${r.title ?? ""} ${r.linkPreview?.title ?? ""} ${r.sourceApp?.name ?? ""}`.toLowerCase();
         return hay.includes(needle);
       })
       .filter((r) => !query.before || isOlder(r, query.before))
@@ -328,6 +344,12 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       const r = find(a.id);
       if (!r.hasThumbnail) throw "clip has no thumbnail";
       return drawThumbnail(r.id);
+    },
+    get_link_image: (a) => {
+      const r = find(a.id);
+      const p = r.linkPreview;
+      if (!p?.image) throw "not found";
+      return p.image === "photo" ? drawThumbnail(r.id, 480, 250) : drawAppIcon(p.site, "#0A84FF");
     },
     paste_clip: (a) => {
       bump(find(a.id));
@@ -397,8 +419,14 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     },
     get_settings: () => structuredClone(settings),
     save_settings: (a) => {
+      const was = settings.linkPreviews;
       settings = structuredClone(a.settings as Settings);
       emit("settings-changed", structuredClone(settings));
+      if (was && !settings.linkPreviews) {
+        // Like Rust: turning previews off deletes the cached ones.
+        for (const r of rows) r.linkPreview = null;
+        emit("clips-changed", { reason: "updated" });
+      }
     },
     set_capture_paused: (a) => {
       settings = { ...settings, capturePaused: !!a.paused };
@@ -471,6 +499,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
         byteSize: new TextEncoder().encode(text).length,
         hasThumbnail: false,
         pinboardIds: [],
+        linkPreview: null,
       });
       emit("clips-changed", { reason: "inserted", id });
       return id;
@@ -483,6 +512,9 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     },
     setPastePermission(granted) {
       pastePermission = granted;
+    },
+    setPausedSilently(paused) {
+      settings = { ...settings, capturePaused: paused };
     },
   };
 }

@@ -12,6 +12,10 @@ use serde::Serialize;
 pub mod macos;
 #[cfg(target_os = "macos")]
 mod macos_apps;
+#[cfg(target_os = "macos")]
+mod macos_images;
+#[cfg(target_os = "macos")]
+pub mod macos_tray;
 #[cfg(not(target_os = "macos"))]
 mod unsupported;
 
@@ -23,6 +27,44 @@ pub use macos_apps::MacApps as SystemApps;
 pub use unsupported::UnsupportedApps as SystemApps;
 #[cfg(not(target_os = "macos"))]
 pub use unsupported::UnsupportedDesktop as SystemDesktop;
+
+/// Image formats accepted from the web for link previews, by their first
+/// bytes: PNG, JPEG, GIF, WebP and ICO. Anything else (SVG, which can carry
+/// scripts; TIFF, HEIC, PDF and the other formats ImageIO also reads) is
+/// refused before a decoder sees it.
+pub fn is_web_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+        || bytes.starts_with(&[0, 0, 1, 0])
+}
+
+/// A downloaded image as PNG (first frame), decoded by the OS. Other
+/// platforms accept PNG only for now.
+pub fn web_image_to_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !is_web_image(bytes) {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_images::to_png(bytes)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        bytes.starts_with(b"\x89PNG").then(|| bytes.to_vec())
+    }
+}
+
+/// A clip was saved: plays the menu bar icon's animation. Main thread only;
+/// a no-op elsewhere and on other platforms for now.
+pub fn tray_clip_saved() {
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        macos_tray::clip_saved(mtm);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrontApp {

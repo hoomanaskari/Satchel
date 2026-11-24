@@ -20,6 +20,8 @@
     now: number;
     renaming: boolean;
     thumbs: ThumbnailCache;
+    /** Link preview images (same blob-URL cache, fed by `get_link_image`). */
+    linkImages: ThumbnailCache;
     icons: AppIconCache | null;
     onselect: (mode: ClickMode) => void;
     onpaste: () => void;
@@ -28,7 +30,7 @@
     onrename: (title: string | null) => void;
   }
 
-  let { clip, selected, current, pinned, shortcut, now, renaming, thumbs, icons, onselect, onpaste, onpin, onmenu, onrename }: Props =
+  let { clip, selected, current, pinned, shortcut, now, renaming, thumbs, linkImages, icons, onselect, onpaste, onpin, onmenu, onrename }: Props =
     $props();
 
   const p = $derived(cardPreview(clip));
@@ -51,6 +53,25 @@
       alive = false;
       thumbUrl = null;
       thumbs.release(id);
+    };
+  });
+
+  // A link preview's image: the same blob-URL lifecycle as thumbnails. Until
+  // it loads (or when there is none) the area shows the site, at the same
+  // size, so nothing moves when it arrives.
+  let linkUrl = $state<string | null>(null);
+  const linkImageId = $derived(p.link?.image ? clip.id : null);
+  $effect(() => {
+    const id = linkImageId;
+    if (id === null) return;
+    let alive = true;
+    linkImages.acquire(id).then((u) => {
+      if (alive) linkUrl = u;
+    });
+    return () => {
+      alive = false;
+      linkUrl = null;
+      linkImages.release(id);
     };
   });
 
@@ -130,6 +151,7 @@
     data-card={clip.id}
     aria-pressed={selected}
     aria-label={label}
+    title={clip.kind === "link" ? clip.preview : undefined}
     tabindex={current ? 0 : -1}
     onclick={click}
     ondblclick={onpaste}
@@ -145,11 +167,26 @@
           <Icon name="image" size={26} />
         {/if}
       </span>
+    {:else if p.link}
+      <span class="thumb site-art" class:photo={p.link.image === "photo" && !!linkUrl}>
+        {#if p.link.image === "photo" && linkUrl}
+          <img src={linkUrl} alt="" draggable="false" />
+        {:else}
+          <span class="site">
+            {#if p.link.image === "icon" && linkUrl}
+              <img class="favicon" src={linkUrl} alt="" draggable="false" />
+            {:else}
+              <span class="glyph"><Icon name="link" size={20} /></span>
+            {/if}
+            <span class="site-name">{p.link.site}</span>
+          </span>
+        {/if}
+      </span>
     {/if}
     {#if p.head && !renaming}
       <span class="title">{p.head}</span>
     {/if}
-    <span class="text" class:mono={p.mono} class:dim={!!p.head}>{p.body}</span>
+    <span class="text" class:mono={p.mono} class:dim={!!p.head} class:oneline={!!p.link}>{p.body}</span>
     <span class="meta"><span>{meta}</span><span>{shortcut}</span></span>
   </button>
 </article>
@@ -268,6 +305,44 @@
     object-fit: cover;
     display: block;
   }
+  .site-art {
+    box-shadow: inset 0 0 0 1px var(--card-edge);
+  }
+  .site-art.photo {
+    box-shadow: none;
+  }
+  .site {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    padding: 0 12px;
+  }
+  .thumb img.favicon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    object-fit: contain;
+  }
+  .glyph {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--field);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .site-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sec);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .title {
     font-size: 13px;
     font-weight: 600;
@@ -293,6 +368,11 @@
   }
   .text.dim {
     color: var(--sec);
+  }
+  .text.oneline {
+    flex: none;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .text.mono {
     font-family: var(--mono);

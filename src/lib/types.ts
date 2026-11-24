@@ -29,6 +29,18 @@ export interface ClipSummary {
   byteSize: number;
   hasThumbnail: boolean;
   pinboardIds: PinboardId[];
+  /** The fetched preview of a link clip (only with "Show link previews" on). */
+  linkPreview: LinkPreview | null;
+}
+
+/** What a link's page says about itself, cached by Rust. */
+export interface LinkPreview {
+  /** Page title, cleaned; null when the page has none. */
+  title: string | null;
+  /** Site name, else the host without `www.`. */
+  site: string;
+  /** What `get_link_image` returns: the page's preview image, the site icon, or nothing. */
+  image: "photo" | "icon" | null;
 }
 
 /** An application for the excluded-apps picker. */
@@ -76,6 +88,8 @@ export interface Settings {
   shelfShortcut: string;
   /** Paste into the frontmost app on selection instead of only copying. */
   pasteOnSelect: boolean;
+  /** Fetch the title and image of copied web links (the only use of the network). On by default. */
+  linkPreviews: boolean;
 }
 
 export type ClipsChangedReason = "inserted" | "bumped" | "deleted" | "cleared" | "updated";
@@ -97,6 +111,8 @@ export interface Commands {
   get_clip_text: { args: { id: ClipId }; ret: string | null };
   /** Raw PNG bytes. Tauri delivers `ArrayBuffer`; a JSON byte array is tolerated. */
   get_clip_thumbnail: { args: { id: ClipId }; ret: ArrayBuffer | Uint8Array | number[] };
+  /** A link clip's preview image or site icon as raw PNG bytes; rejects with "not found". */
+  get_link_image: { args: { id: ClipId }; ret: ArrayBuffer | Uint8Array | number[] };
   paste_clip: { args: { id: ClipId; plainText: boolean }; ret: void };
   paste_clips: { args: { ids: ClipId[]; plainText: boolean }; ret: void };
   copy_clip: { args: { id: ClipId; plainText: boolean }; ret: void };

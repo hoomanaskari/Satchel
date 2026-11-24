@@ -140,10 +140,14 @@ impl<S: ClipboardSource> Capturer<S> {
         match result {
             Ok(InsertOutcome::Inserted(s)) => {
                 ctx.events.clips_changed(ChangeReason::Inserted, Some(s.id));
+                ctx.events.clip_saved();
+                crate::link_preview::on_copied(ctx, s.id, s.kind);
                 Outcome::Stored { reason: ChangeReason::Inserted, id: s.id }
             }
             Ok(InsertOutcome::Bumped(s)) => {
                 ctx.events.clips_changed(ChangeReason::Bumped, Some(s.id));
+                ctx.events.clip_saved();
+                crate::link_preview::on_copied(ctx, s.id, s.kind);
                 Outcome::Stored { reason: ChangeReason::Bumped, id: s.id }
             }
             Err(_) => Outcome::Failed,
@@ -284,6 +288,30 @@ mod tests {
     }
 
     #[test]
+    fn copied_links_are_queued_for_a_preview_only_with_the_setting_on() {
+        let h = Harness::with_real_core();
+        let mut cap = Capturer::new(h.source(), 0);
+        h.board.external_copy(&[TEXT], text("https://www.example.com/off"));
+        cap.poll(&h.ctx);
+        assert_eq!(h.ctx.store.lock().next_link_preview_at().unwrap(), None, "off: nothing queued");
+        h.ctx.set_settings(satchel_core::Settings { link_previews: true, ..crate::testing::sample_settings() });
+        h.board.external_copy(&[TEXT], text("just words, not a link"));
+        cap.poll(&h.ctx);
+        assert_eq!(h.ctx.store.lock().next_link_preview_at().unwrap(), None, "not a link");
+        h.board.external_copy(&[TEXT], text("https://www.example.com/on"));
+        cap.poll(&h.ctx);
+        assert!(h.ctx.store.lock().next_link_preview_at().unwrap().is_some(), "on: queued");
+        // Re-copying the link copied while off queues it now.
+        h.board.external_copy(&[TEXT], text("https://www.example.com/off"));
+        cap.poll(&h.ctx);
+        let job = h.ctx.store.lock().claim_link_preview(i64::MAX - 10, 0).unwrap().unwrap();
+        let job2 = h.ctx.store.lock().claim_link_preview(i64::MAX - 10, 0).unwrap().unwrap();
+        let mut urls = vec![job.url, job2.url];
+        urls.sort();
+        assert_eq!(urls, vec!["https://www.example.com/off", "https://www.example.com/on"]);
+    }
+
+    #[test]
     fn refused_changes_are_never_read() {
         let h = Harness::new();
         h.policy.allow.store(false, Ordering::SeqCst);
@@ -344,6 +372,71 @@ mod tests {
         h.board.external_copy(&[TEXT], text("again"));
         assert_eq!(cap.poll(&h.ctx), Outcome::Stored { reason: ChangeReason::Bumped, id });
         assert!(h.log.entries().contains(&format!("event clips-changed bumped {id}")));
+    }
+
+    #[test]
+    fn a_stored_or_recopied_clip_animates_the_menu_bar_icon() {
+        let saved = |h: &Harness| h.clips_saved.load(Ordering::SeqCst);
+        let h = Harness::new();
+        let mut cap = Capturer::new(h.source(), 0);
+
+        h.board.external_copy(&[TEXT], text("new"));
+        assert!(matches!(cap.poll(&h.ctx), Outcome::Stored { reason: ChangeReason::Inserted, .. }));
+        assert_eq!(saved(&h), 1);
+
+        // A re-copy of a clip already in history moves it to the top and
+        // animates too.
+        h.board.external_copy(&[TEXT], text("new"));
+        assert!(matches!(cap.poll(&h.ctx), Outcome::Stored { reason: ChangeReason::Bumped, .. }));
+        assert_eq!(saved(&h), 2);
+
+        // Nothing changed, empty text, a copy over the cap, Satchel's own
+        // write, an excluded or concealed copy: none of these animate.
+        assert_eq!(cap.poll(&h.ctx), Outcome::Unchanged);
+        h.board.external_copy(&[TEXT], text("  "));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::Nothing));
+        h.board.external_copy(&[TEXT], Payload::TooLarge { kind: ClipKind::Text, limit_bytes: 1 });
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::TooLarge));
+        h.ctx
+            .self_writes
+            .write_with(|| {
+                h.ctx.clipboard.write(&WriteRequest { text: Some("mine".into()), ..Default::default() })
+            })
+            .unwrap();
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::OwnWrite));
+        h.policy.allow.store(false, Ordering::SeqCst);
+        h.board.external_copy(&[TEXT], text("from an excluded app"));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::Refused));
+        h.board.external_copy(&[TEXT], text("new"));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::Refused));
+        h.policy.allow.store(true, Ordering::SeqCst);
+        assert_eq!(saved(&h), 2);
+
+        // Paused: nothing, neither for new content nor for a re-copy.
+        let mut s = h.ctx.settings();
+        s.capture_paused = true;
+        h.ctx.set_settings(s.clone());
+        h.board.external_copy(&[TEXT], text("while paused"));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::Refused));
+        h.board.external_copy(&[TEXT], text("new"));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Skipped(Skip::Refused));
+        assert_eq!(saved(&h), 2);
+
+        // Resumed: the next new clip animates again.
+        s.capture_paused = false;
+        h.ctx.set_settings(s);
+        h.board.external_copy(&[TEXT], text("after resuming"));
+        cap.poll(&h.ctx);
+        assert_eq!(saved(&h), 3);
+    }
+
+    #[test]
+    fn a_failed_store_does_not_animate() {
+        let h = Harness::with_store(FakeStore::failing());
+        let mut cap = Capturer::new(h.source(), 0);
+        h.board.external_copy(&[TEXT], text("x"));
+        assert_eq!(cap.poll(&h.ctx), Outcome::Failed);
+        assert_eq!(h.clips_saved.load(Ordering::SeqCst), 0);
     }
 
     #[test]

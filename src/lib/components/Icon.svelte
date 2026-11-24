@@ -1,6 +1,6 @@
 <script lang="ts">
   // Inline SVG icons; decorative, so hidden from assistive tech.
-  type Name = "search" | "pin" | "more" | "plus" | "close" | "image" | "file" | "check";
+  type Name = "search" | "pin" | "more" | "plus" | "close" | "image" | "file" | "check" | "link" | "pause" | "play";
   let { name, size = 15, filled = false }: { name: Name; size?: number; filled?: boolean } = $props();
 </script>
 
@@ -27,8 +27,17 @@
     <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
       <path d="M6 3h8l4 4v14H6z"></path><path d="M14 3v4h4"></path>
     </g>
+  {:else if name === "link"}
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"></path>
+      <path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"></path>
+    </g>
   {:else if name === "check"}
     <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+  {:else if name === "pause"}
+    <g fill="currentColor"><rect x="6.5" y="5" width="3.6" height="14" rx="1.2"></rect><rect x="13.9" y="5" width="3.6" height="14" rx="1.2"></rect></g>
+  {:else if name === "play"}
+    <path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.4-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z" fill="currentColor"></path>
   {/if}
 </svg>
 

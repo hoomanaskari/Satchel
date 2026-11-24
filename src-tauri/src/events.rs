@@ -45,6 +45,10 @@ pub trait EventSink: Send + Sync {
     fn settings_changed(&self, settings: &Settings);
     /// A copy of `kind` was over the cap `limit_bytes` and was not stored.
     fn capture_skipped(&self, kind: ClipKind, limit_bytes: u64);
+    /// Capture just stored a clip, new or re-copied (moved to the top), not
+    /// a refused or skipped one: the menu bar icon plays its animation.
+    /// Must not block.
+    fn clip_saved(&self);
 }
 
 #[cfg(test)]

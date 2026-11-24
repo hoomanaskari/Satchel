@@ -34,7 +34,13 @@ impl Policy for CorePolicy {
 
 /// Hides the shelf window. Implementations block until it is hidden.
 pub trait ShelfControl: Send + Sync {
+    /// Hides at once (paste: nothing may wait on an animation).
     fn hide(&self);
+    /// Slides the shelf out of sight (Escape, the shortcut, a click in its
+    /// margin). Returns as soon as the slide has started.
+    fn dismiss(&self) {
+        self.hide();
+    }
 }
 
 /// Opens and closes the settings window.
@@ -70,6 +76,8 @@ pub struct Ctx {
     pub paste_lock: Mutex<()>,
     /// The Accessibility prompt is shown at most once per run.
     pub accessibility_prompted: AtomicBool,
+    /// Wakes the link preview workers (see `link_preview`).
+    pub link_wake: crate::link_preview::Wake,
 }
 
 impl Ctx {

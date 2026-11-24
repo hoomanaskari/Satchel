@@ -24,6 +24,7 @@ const settings: Settings = {
   captureImages: true,
   shelfShortcut: "CommandOrControl+Shift+V",
   pasteOnSelect: true,
+  linkPreviews: false,
 };
 
 afterEach(() => ipc.setTransport(null));

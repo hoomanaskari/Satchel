@@ -93,9 +93,9 @@ pub fn restore_focus(ctx: &Ctx, pid: i32) -> bool {
     is_front()
 }
 
-/// Hides the shelf and hands focus back to the previous app (Escape).
+/// Slides the shelf away and hands focus back to the previous app (Escape).
 pub fn dismiss_shelf(ctx: &Ctx) {
-    ctx.shelf.hide();
+    ctx.shelf.dismiss();
     if let Some(pid) = ctx.previous_app()
         && !ctx.desktop.frontmost_app().is_some_and(|a| a.pid == pid)
     {
@@ -329,11 +329,12 @@ mod tests {
         let h = Harness::new();
         h.ctx.remember_previous_app(Some(42));
         dismiss_shelf(&h.ctx);
-        assert_eq!(h.log.entries(), vec!["hide shelf"]);
+        // Slid away, not hidden at once like a paste.
+        assert_eq!(h.log.entries(), vec!["dismiss shelf"]);
         h.log.clear();
         h.ctx.remember_previous_app(Some(7));
         dismiss_shelf(&h.ctx);
-        assert_eq!(h.log.entries(), vec!["hide shelf", "activate 7"]);
+        assert_eq!(h.log.entries(), vec!["dismiss shelf", "activate 7"]);
     }
 
     #[test]

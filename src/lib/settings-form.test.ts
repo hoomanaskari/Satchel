@@ -17,6 +17,7 @@ const base: Settings = {
   captureImages: true,
   shelfShortcut: "CommandOrControl+Shift+V",
   pasteOnSelect: true,
+  linkPreviews: false,
 };
 
 type Ev = Parameters<typeof acceleratorFromEvent>[0];

@@ -97,6 +97,30 @@ describe("mock backend: clip commands", () => {
     await expect(inv("get_clip_thumbnail", { id: txt.id })).rejects.toBeTruthy();
   });
 
+  it("has sample link previews (photo, icon, none) and serves their images", async () => {
+    const { inv } = setup();
+    const rows = await inv<ClipSummary[]>("list_clips", { query: q({ limit: 200 }) });
+    const links = rows.filter((r) => r.kind === "link");
+    const kinds = new Set(links.map((r) => (r.linkPreview ? (r.linkPreview.image ?? "none") : "no preview")));
+    expect(kinds).toEqual(new Set(["photo", "icon", "none", "no preview"]));
+    expect(rows.filter((r) => r.kind !== "link").every((r) => r.linkPreview === null)).toBe(true);
+    const photo = links.find((r) => r.linkPreview?.image === "photo")!;
+    const bytes = new Uint8Array((await inv("get_link_image", { id: photo.id })) as ArrayBuffer);
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    const bare = links.find((r) => r.linkPreview === null)!;
+    await expect(inv("get_link_image", { id: bare.id })).rejects.toBeTruthy();
+    // The token-style sample has no preview, as Rust would never fetch it.
+    expect(links.find((r) => r.preview.includes("token="))?.linkPreview).toBeNull();
+  });
+
+  it("search matches a link's page title as well as its address", async () => {
+    const { inv } = setup();
+    const byTitle = await inv<ClipSummary[]>("list_clips", { query: q({ text: "bunny" }) });
+    expect(byTitle.map((r) => r.preview)).toEqual(["https://www.youtube.com/watch?v=aqz-KE-bpKQ"]);
+    const byUrl = await inv<ClipSummary[]>("list_clips", { query: q({ text: "youtube.com/watch" }) });
+    expect(byUrl).toHaveLength(1);
+  });
+
   it("paste_clip bumps the clip to the top and emits clips-changed", async () => {
     const { m, inv } = setup();
     const events: unknown[] = [];
@@ -195,6 +219,18 @@ describe("mock backend: settings and simulation", () => {
     await inv("set_capture_paused", { paused: true });
     expect((await inv<{ capturePaused: boolean }>("get_settings")).capturePaused).toBe(true);
     expect(seen).toHaveLength(2);
+  });
+
+  it("turning link previews off clears them and announces the change", async () => {
+    const { m, inv } = setup();
+    const changes: unknown[] = [];
+    await m.transport.listen("clips-changed", (p) => changes.push(p));
+    const s = await inv<Record<string, unknown>>("get_settings");
+    expect(s.linkPreviews).toBe(true);
+    await inv("save_settings", { settings: { ...s, linkPreviews: false } });
+    const rows = await inv<ClipSummary[]>("list_clips", { query: q({ limit: 200 }) });
+    expect(rows.every((r) => r.linkPreview === null)).toBe(true);
+    expect(changes).toEqual([{ reason: "updated" }]);
   });
 
   it("simulateCopy inserts a new clip on top and show() emits shelf-shown", async () => {

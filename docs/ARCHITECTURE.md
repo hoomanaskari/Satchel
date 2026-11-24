@@ -18,8 +18,11 @@ compiling fallback on the other platforms.
 
 ### Security rules (non-negotiable)
 
-- No network access of any kind. No telemetry, no update pings, no remote
-  fonts or scripts. Do not add HTTP, shell, opener or filesystem plugins.
+- No network access except link previews, which are on by default and
+  run only while "Show link previews" is on (see "Link previews" below);
+  turned off, Satchel makes no request at all. No telemetry, no update pings, no remote fonts or
+  scripts. The web view never reaches the network: Rust fetches and hands
+  over bytes. Do not add HTTP, shell, opener or filesystem plugins.
 - Strict CSP in `tauri.conf.json`: `default-src 'self'`; no `unsafe-eval`; no
   remote origins. Images load only from the app's own scheme/IPC.
 - Tauri capabilities are minimal and scoped to the windows that need them:
@@ -47,7 +50,15 @@ compiling fallback on the other platforms.
   (no allocation when unchanged, 250–500 ms interval); on Windows the
   clipboard format listener (event driven); on Linux X11 XFixes events.
 - Shelf appears in under 100 ms from the shortcut: the window is created once
-  at startup and shown/hidden, never recreated.
+  at startup and shown/hidden, never recreated. On macOS it is ordered in and
+  made key at once (typing and Return work immediately), then slides up from
+  the bottom edge: the slide starts `shelf::SHOW_DELAY` (50 ms) later, once
+  WebKit has repainted the page, and takes `SHOW_SECONDS` (220 ms, ease-out
+  `cubic-bezier(0.25, 0.8, 0.35, 1)`). Dismissing (Escape, the shortcut, a
+  click outside or in its margin) slides it down in `HIDE_SECONDS` (160 ms,
+  ease-in) without blocking. A paste hides it at once, so focus hand-back and
+  the ⌘V keystroke are as fast as without animation. "Reduce motion" turns
+  both slides off.
 - Search over 10,000 clips returns in under 30 ms (SQLite FTS5).
 - Lists carry `ClipSummary` only (preview capped at 300 chars); full content
   and image bytes are fetched one clip at a time. The shelf windows its list
@@ -148,6 +159,7 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `list_clips` | `query: Query` | `ClipSummary[]` |
 | `get_clip_text` | `id` | `string \| null` (full text, for preview/edit) |
 | `get_clip_thumbnail` | `id` | raw PNG bytes (`ArrayBuffer`) |
+| `get_link_image` | `id` | raw PNG bytes of a link clip's cached preview image or site icon (`ArrayBuffer`); `not found` when it has none. Never touches the network |
 | `paste_clip` | `id, plainText: boolean` | `void` — hides the shelf, writes the clipboard, pastes into the previously frontmost app, bumps the clip |
 | `paste_clips` | `ids: number[], plainText: boolean` | `void` — pastes several clips in order (multi-select / paste stack) |
 | | | Without the Accessibility permission both copy instead, leave the shelf up and fail with `accessibility-permission-required: …` so the shelf can explain |
@@ -163,7 +175,7 @@ Commands (`invoke` names, snake_case; argument keys camelCase):
 | `pin_clip` | `clipId, pinboardId` | `void` |
 | `unpin_clip` | `clipId, pinboardId` | `void` |
 | `get_settings` | — | `Settings` |
-| `save_settings` | `settings: Settings` | `void` |
+| `save_settings` | `settings: Settings` | `void` — turning `linkPreviews` off deletes every cached preview (then `clips-changed` `updated`); turning it on wakes the preview workers |
 | `set_capture_paused` | `paused: boolean` | `void` |
 | `hide_shelf` | — | `void` |
 | `open_settings` | — | `void` — hides the shelf (focus is not handed back) and opens or focuses the settings window |
@@ -180,7 +192,7 @@ Events emitted by Rust:
 
 | Event | Payload | When |
 |---|---|---|
-| `clips-changed` | `{ reason: "inserted" \| "bumped" \| "deleted" \| "cleared" \| "updated", id?: number }` | history changed |
+| `clips-changed` | `{ reason: "inserted" \| "bumped" \| "deleted" \| "cleared" \| "updated", id?: number }` | history changed (`updated` with an id also when a link preview arrives) |
 | `pinboards-changed` | — | pinboards or membership changed |
 | `shelf-shown` | — | the shelf was just shown; UI resets search, selects the first clip and focuses the search field |
 | `settings-changed` | `Settings` | settings saved (sent to every window: the shelf picks up changes made in the settings window) |
@@ -189,12 +201,26 @@ Events emitted by Rust:
 ## Windows
 
 - `shelf`: borderless, transparent, always-on-top, full-width panel docked to
-  the bottom of the active screen, 364 pt tall (`shelf::HEIGHT`: the 328 pt
+  the very bottom of the screen under the cursor (`shelf::display_under`),
+  over the Dock like the Paste app: its frame comes from the screen's full
+  frame, not the work area (`dock_rect`), it spans the full width also over a
+  Dock on the left or right, and its window level (status) is above the
+  Dock's. Only the top of the work area is used, so on a short screen it never
+  covers the menu bar. 364 pt tall (`shelf::HEIGHT`: the 328 pt
   panel plus its 24 pt top and 12 pt bottom margins; mirrored as
   `--shelf-height` in `src/app.css`, which a Rust test checks), hidden at startup, skip taskbar. Must not
   activate the app or steal focus from the frontmost app more than needed to
   take keyboard input; on hide, focus returns to the previous app so the paste
   lands there.
+- Shelf motion (macOS): AppKit's window animator moves the whole window
+  (`platform::macos::animate_window`), so the native glass, the web content
+  and the CSS shadow move as one surface. The window stays opaque during the
+  slide (Liquid Glass ignores window alpha). A slide-in starts with the
+  window 1 pt from fully hidden: that point is transparent shadow margin, but
+  it makes macOS treat the window as on screen so WebKit repaints before the
+  panel appears. `shelf::Motion` tracks shown / sliding out with a
+  generation counter, so pressing the shortcut mid-slide reverses from where
+  the window is and a stale slide-out never hides a re-shown shelf.
 - Shelf background (macOS): the web view is transparent and the UI paints the
   rounded panel, inset `--panel-inset` (12 pt, `shelf::PANEL_INSET`) from the
   window's left, right and bottom edges and `--panel-top` (24 pt,
@@ -219,8 +245,26 @@ Events emitted by Rust:
   "glass" | "blur" | "none"`, read by `shelfBackground()` in
   `src/lib/platform.ts`); over glass the panel tint is nearly clear, otherwise
   (blur, Windows, Linux, plain-browser mock mode) it stays semi-opaque.
-- `settings`: a regular titled window (680×520 logical, not resizable,
-  centered) loading the `/settings` route (prerendered as `settings.html`).
+- `settings`: a regular titled window loading the `/settings` route
+  (prerendered as `settings.html`). Resizable between 600×400 and 1040×1000
+  points, title bar included (760×600 on first open, centred); no zoom button and no
+  full screen (`disallow_full_screen`). The form's sections scroll between
+  the title bar and a pinned footer (Clear History…, Revert, Save), with a
+  divider and a bottom fade while more content is out of view (overlay
+  scroll bars hide when idle). Its frame (AppKit screen points, so a
+  display's scale factor does not matter) is saved 500 ms after the last
+  move or resize and again on close, by a writer thread
+  (`window_frame::FrameSaver`), as JSON in the store's window state: the
+  `settings` table under the key `window.settings`
+  (`Store::window_state` / `save_window_state`), which `Settings`,
+  `save_settings` and `settings-changed` never touch. On the next open
+  (also after a restart) `window_frame::restore` checks it against the
+  current displays: the size is clamped to the limits and to the display's
+  work area; a frame still partly on a display is moved fully inside the
+  work area of the display it overlaps most; one on no display (moved off
+  screen, or its display unplugged) is centred on the display under the
+  pointer, else the main one. Windows/Linux: not saved yet (TODO), always
+  centred.
   Created on demand and destroyed on close, unlike the shelf: it is rarely
   open and its web view's memory is given back. Single instance: opening it
   again shows and focuses the existing one. Opened from the tray, the
@@ -231,8 +275,8 @@ Events emitted by Rust:
   never quits Satchel.
 - Capabilities: `shelf` may use the clip, pinboard and paste commands plus
   `get_settings`, `set_capture_paused`, `hide_shelf`, `open_settings`,
-  `open_accessibility_settings` and `get_app_icon` (icons only: it cannot
-  list or choose apps);
+  `open_accessibility_settings`, `get_app_icon` (icons only: it cannot
+  list or choose apps) and `get_link_image` (cached bytes only);
   `settings` may use only `get_settings`, `save_settings`,
   `set_capture_paused`, `clear_history`, `close_settings` and the app
   picker's `list_apps`, `resolve_apps`, `get_app_icon` and `choose_app`.
@@ -252,6 +296,22 @@ Events emitted by Rust:
   Other App…" (`choose_app`) and "Add by Identifier…".
 - Tray / menu bar icon with: Show Satchel, Settings…, Pause Capturing, Clear
   History, Quit. No dock icon on macOS (accessory activation policy).
+- Menu bar icon animation (`tray_anim.rs`, `platform/macos_tray.rs`): when
+  capture stores a clip, new or a re-copy bumped to the top
+  (`EventSink::clip_saved`; not for refused, paused, skipped, too-large or
+  own writes, or a failed store) the satchel's flap
+  lifts, a card fades in inside the handle and falls into the bag, and the
+  flap drops shut with one small rebound (0.6 s). The glyph is drawn from
+  code as a function of the pose (18 pt grid, so edges sit on whole pixels),
+  rendered per frame into a template `NSImage` with 1x and 2x bitmaps and set
+  on the tray's own `NSStatusBarButton` (reached through
+  `with_inner_tray_icon` / `ns_status_item`) from an `NSTimer` in the common
+  run loop modes that exists only while the animation runs. Clips during a
+  run join it, rewind it seamlessly once the card is in, or queue at most
+  one replay. Reduce Motion: no animation. Other platforms: no-op. The
+  capture thread posts at most one hop to the main thread at a time.
+  `SATCHEL_TRAY_SHEET=<png> cargo test -p satchel tray_sheet -- --ignored`
+  writes every frame to a contact sheet for review.
 
 ## Shelf behavior (matches the prototype in `docs/design/`)
 
@@ -264,7 +324,13 @@ Events emitted by Rust:
   a larger preview; Shift/Cmd-click multi-selects; Escape closes.
 - Cards show the source app (its real icon and name), kind, relative time,
   and a preview by kind (text, link, code in monospace, color swatch, image
-  thumbnail with its pixel size and file size, file names). The larger
+  thumbnail with its pixel size and file size, file names). A link with a
+  cached preview shows the page's image (or the site icon over the site
+  name, or a link glyph over it) in the same 92 pt area an image thumbnail
+  uses, then its title (the user's own title wins) and "site · host"; the
+  full address is the card's tooltip and is in the larger preview. Until
+  the image has loaded the area shows the site, at the same size, so
+  nothing moves. Links without a preview look as they always did. The larger
   preview (Space) shows the image thumbnail with its dimensions. The icon comes from `get_app_icon` by the clip's
   `sourceApp.id` through one `AppIconCache` for the page (one `blob:` URL
   per app, shared by every card and the preview, kept while the shelf page
@@ -291,6 +357,93 @@ Events emitted by Rust:
   and filters scroll) to their minimums; the count hides at ≤1180 px of bar,
   "… as Plain Text" becomes "Plain Text" at ≤1000 px, and that button leaves
   the bar at ≤860 px (still in the clip menu and on Shift+Return).
+
+## Link previews
+
+On by default (`Settings.link_previews`, stored as `link_previews`;
+missing means on, so existing settings upgrade with it on: the user chose
+previews by default, which is why the skip rules below are strict). With it
+off Satchel makes no network request at all: nothing is queued, the workers
+never claim a job, and the HTTP client is never called (tested in
+`link_preview::tests::nothing_is_queued_or_fetched_while_the_setting_is_off`).
+
+Implementation: a small Rust HTTPS client (`ureq` + rustls) in
+`src-tauri/src/link_preview/`, not Apple's LinkPresentation.
+`LPMetadataProvider` loads the page in WebKit with JavaScript and
+subresources, uses the app's shared URL loading (cookies and caches), and
+gives no control over redirects, resolved addresses, size or the user
+agent; none of the rules below could be enforced with it.
+
+When a link is fetched: a Link clip copied (or copied again) while the
+setting is on is queued at once. Link clips already in the history (an
+upgrade, or the setting turned back on) are backfilled: one is queued
+every 15 s (`BACKFILL_EVERY_MS`), newest first, the first 15 s after
+launch or after the setting is turned on, so there is never a burst of
+requests. A queued clip is fetched once, in the background, by
+one of `WORKERS` (2) threads that sleep on a condition variable until
+there is work, never on the capture or shelf-show paths. Before fetching
+the worker re-checks the setting, the excluded-apps list (the clip's
+source app may have been excluded since) and `link::fetch_target`:
+
+- Only `http`/`https`; `http` is upgraded to `https` (never sent in clear
+  text). Over 2048 bytes: skipped.
+- Skipped: user info in the URL; an IP address host; a non-default port;
+  a single-label host or a local/reserved suffix (`localhost`, `.local`,
+  `.lan`, `.internal`, `.home.arpa`, `.test`, `.onion`, ...); sign-in,
+  account, mail and payment hosts (`login.`, `auth.`, `sso.`, `accounts.`,
+  `id.`, `mail.`, `checkout.`, ...).
+- Skipped as one-time / credential links: query parameters named like
+  tokens, keys, signatures (incl. S3/GCS/Azure SAS), sessions, passwords,
+  OTPs, nonces, codes, OAuth/redirect parameters (`redirect_uri`, `next`,
+  `continue`, `state`, ...), e-mail addresses or phone numbers; a parameter
+  value that is itself a URL or contains `@`; path segments such as
+  `reset`, `password`, `login`, `verify`, `confirm`, `unsubscribe`,
+  `invite`, `magic`, `oauth`, `callback`, `token`, `redeem`, `checkout`,
+  `invoice`, `account`, `settings`; any segment, value or fragment that
+  looks like a random identifier (a UUID, 16+ letters and digits mixed, or
+  24+ mixed-case letters); a fragment with such parameters. When unsure,
+  the link is not fetched. Tracking parameters (`utm_*`, `fbclid`,
+  `gclid`, `si`, ...) and the fragment are removed before fetching.
+- Network rules (`link_preview/http.rs`): every resolved address must be
+  globally routable (`link::is_public_ip`: no loopback, private,
+  link-local, CGNAT, multicast, documentation or reserved ranges, IPv6
+  forms judged by their embedded IPv4) and is checked in the resolver, so
+  the connection goes to the checked address; every redirect (at most 5)
+  passes `link::redirect_target` (all of the above again, and never to
+  `http`); 10 s per page including redirects, 10 s per image, 5 s to
+  connect; pages must be `text/html`/`application/xhtml+xml` and only the
+  first 512 KiB is read; images must be `image/*` (not SVG), at most
+  5 MiB, not redirected, and PNG, JPEG, GIF, WebP or ICO by their first
+  bytes, decoded by ImageIO with a 40 MP cap. No cookies (no cookie store
+  is compiled in), no credentials, no `Referer`, no `Accept-Language`,
+  environment proxies ignored, and the generic `Twitterbot/1.0` crawler
+  user agent (sites send it a small page with the card metadata early;
+  it identifies neither Satchel nor the Mac).
+- Per page: one HTML request, then at most one successful image request
+  (`og:image`, else the best `<link rel=icon>`, else `/favicon.ico`).
+- Parsing (`link::parse_html`) reads `<head>` only: `og:title` /
+  `twitter:title` / `<title>`, `og:site_name`, `og:image` /
+  `twitter:image`, icons; ignores script, style, noscript and comments;
+  never runs anything. Charset from the header, else `<meta charset>`,
+  else UTF-8 (Latin-1/Windows-1252 understood; other encodings' non-ASCII
+  text is dropped). Control and bidi-override characters are removed;
+  titles are capped at 200 characters, site names at 80.
+- Failures: offline, DNS, timeouts, 408/425/429/5xx are retried after
+  1 and 4 minutes, then given up (3 attempts); anything else is final.
+
+Stored (`link_previews`, `link_preview_images`, both cascading from
+`clips`): status, title, site, image kind, attempts, next attempt, fetched
+at, and one PNG (preview image ≤ 480 px, or icon ≤ 128 px; ≤ 512 KiB).
+No URL is stored beyond the clip itself. The title is indexed for search
+with the clip's own title. Previews are deleted with their clip (delete,
+Clear History, retention pruning), and all of them, with the queue, when
+the setting is turned off (`clear_link_previews`, secure delete + WAL
+checkpoint). The shelf gets the preview in `ClipSummary.linkPreview` and
+the image through `get_link_image`, as bytes turned into `blob:` URLs
+like thumbnails; the CSP is unchanged.
+
+`SATCHEL_TRACE=1` logs each preview's outcome and skip reason (never the
+link, title or host).
 
 ## Testing
 

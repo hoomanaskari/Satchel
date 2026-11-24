@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use crate::commands::api;
 use crate::ctx::Ctx;
 use crate::shelf::Shelf;
+use crate::tray_anim::PostGate;
 
 pub const ID_SHOW: &str = "show";
 pub const ID_SETTINGS: &str = "settings";
@@ -24,50 +25,10 @@ pub const ICON_SIZE: u32 = 36;
 /// Pause item, kept so settings changes from the UI update its check mark.
 pub struct PauseItem<R: Runtime>(pub CheckMenuItem<R>);
 
-/// Coverage of a satchel glyph (flap bag with a handle) at `(x, y)` in a
-/// unit square, y pointing down.
-fn glyph(x: f64, y: f64) -> bool {
-    // Handle: ring above the bag.
-    let (hx, hy) = (0.5 - x, 0.36 - y);
-    let ring = (hx * hx + hy * hy).sqrt();
-    if y < 0.36 && (0.15..=0.24).contains(&ring) {
-        return true;
-    }
-    // Body: rounded rectangle.
-    let (left, right, top, bottom, r) = (0.1, 0.9, 0.34, 0.9, 0.1);
-    if !(left..=right).contains(&x) || !(top..=bottom).contains(&y) {
-        return false;
-    }
-    let cx = x.clamp(left + r, right - r);
-    let cy = y.clamp(top + r, bottom - r);
-    if (x - cx).powi(2) + (y - cy).powi(2) > r * r {
-        return false;
-    }
-    // A flap seam is cut out, interrupted by the clasp, so it reads as a bag.
-    let seam = (0.52..=0.58).contains(&y) && (0.16..=0.84).contains(&x);
-    let clasp = (0.43..=0.57).contains(&x) && (0.48..=0.66).contains(&y);
-    clasp || !seam
-}
-
-/// Black-on-transparent RGBA template image, 4x4 supersampled.
+/// The resting satchel glyph as a black-on-transparent RGBA template image
+/// (drawn in `tray_anim`, which also draws the animation frames).
 pub fn icon_rgba(size: u32) -> Vec<u8> {
-    const SS: u32 = 4;
-    let mut out = Vec::with_capacity((size * size * 4) as usize);
-    for py in 0..size {
-        for px in 0..size {
-            let mut hits = 0u32;
-            for sy in 0..SS {
-                for sx in 0..SS {
-                    let x = (px as f64 + (sx as f64 + 0.5) / SS as f64) / size as f64;
-                    let y = (py as f64 + (sy as f64 + 0.5) / SS as f64) / size as f64;
-                    hits += glyph(x, y) as u32;
-                }
-            }
-            let alpha = (hits * 255 / (SS * SS)) as u8;
-            out.extend_from_slice(&[0, 0, 0, alpha]);
-        }
-    }
-    out
+    crate::tray_anim::render(size, &crate::tray_anim::Pose::REST)
 }
 
 pub fn create<R: Runtime>(app: &AppHandle<R>, paused: bool) -> tauri::Result<()> {
@@ -82,7 +43,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, paused: bool) -> tauri::Result<()>
     )?;
     app.manage(PauseItem(pause));
 
-    TrayIconBuilder::with_id("satchel")
+    let tray = TrayIconBuilder::with_id("satchel")
         .icon(Image::new_owned(icon_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE))
         .icon_as_template(true)
         .tooltip("Satchel")
@@ -90,7 +51,39 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, paused: bool) -> tauri::Result<()>
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_menu(app, event.id().as_ref()))
         .build(app)?;
+    // The animation drives the native status item directly (see
+    // `platform::macos_tray`). Setup runs on the main thread.
+    #[cfg(target_os = "macos")]
+    let _ = tray.with_inner_tray_icon(|inner| {
+        if let (Some(item), Some(mtm)) = (inner.ns_status_item(), objc2::MainThreadMarker::new()) {
+            crate::platform::macos_tray::install(mtm, &item);
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray;
     Ok(())
+}
+
+/// One "clip saved" hop to the main thread at a time.
+static CLIP_SAVED: PostGate = PostGate::new();
+
+/// Called by capture (on the watcher thread) when a clip is stored, new or
+/// re-copied: queues the menu bar animation on the main thread and returns
+/// at once.
+/// Clips that arrive while a hop is queued ride along with it.
+pub fn clip_saved<R: Runtime>(app: &AppHandle<R>) {
+    if !CLIP_SAVED.claim() {
+        return;
+    }
+    let queued = app
+        .run_on_main_thread(|| {
+            CLIP_SAVED.release();
+            crate::platform::tray_clip_saved();
+        })
+        .is_ok();
+    if !queued {
+        CLIP_SAVED.release();
+    }
 }
 
 fn handle_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
@@ -99,7 +92,7 @@ fn handle_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
     match id {
         ID_SHOW => {
             if let Some(shelf) = app.try_state::<Shelf<R>>()
-                && !shelf.is_visible()
+                && !shelf.is_shown()
             {
                 shelf.show(app, &ctx);
             }

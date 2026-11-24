@@ -26,6 +26,12 @@
     createUrl: (b) => URL.createObjectURL(b),
     revoke: (u) => URL.revokeObjectURL(u),
   });
+  // Link preview images: fetched and cached by Rust, handed over as bytes.
+  const linkImages = new ThumbnailCache({
+    fetch: (id) => api.getLinkImage(id),
+    createUrl: (b) => URL.createObjectURL(b),
+    revoke: (u) => URL.revokeObjectURL(u),
+  });
   // Source-app icons on the cards: one entry per app, kept for the life of
   // the page (the shelf is shown and hidden, never reloaded), so reopening
   // the shelf or re-rendering cards never refetches or flickers.
@@ -67,6 +73,7 @@
       dispose?.();
       document.removeEventListener("visibilitychange", vis);
       thumbs.clear();
+      linkImages.clear();
       icons.clear();
     };
   });
@@ -309,6 +316,21 @@
       {/if}
     </div>
     <div class="count" class:hidden={!!notice} aria-live="polite">{shelf.resultLabel}</div>
+    <!-- A state, not a notice: shown for as long as capture is paused, however
+         it was paused (this menu, the tray, Settings). Clicking resumes. -->
+    {#if shelf.paused}
+      <button
+        type="button"
+        class="paused"
+        aria-label="Capture paused. Resume capturing"
+        title="Satchel is not saving copies. Click to resume."
+        onclick={() => void shelf.setPaused(false)}
+      >
+        <span class="glyph idle"><Icon name="pause" size={11} /></span>
+        <span class="glyph hover"><Icon name="play" size={11} /></span>
+        <span>Paused</span>
+      </button>
+    {/if}
     <div class="actions">
       <button type="button" class="pill" disabled={!hasSelection} aria-label={labels.plain} onclick={() => void shelf.paste(true)}>
         <span class="long">{labels.plain}</span><span class="short" aria-hidden="true">Plain Text</span>
@@ -324,6 +346,7 @@
     <CardList
       {shelf}
       {thumbs}
+      {linkImages}
       {icons}
       {renaming}
       onpin={openPinMenu}
@@ -331,7 +354,7 @@
       onrename={commitRename}
     />
     {#if shelf.previewOpen && focusClip}
-      <PreviewPanel clip={focusClip} preview={shelf.preview} {thumbs} {icons} now={shelf.now} onclose={() => shelf.closePreview()} />
+      <PreviewPanel clip={focusClip} preview={shelf.preview} {thumbs} {linkImages} {icons} now={shelf.now} onclose={() => shelf.closePreview()} />
     {/if}
   </div>
 
@@ -549,6 +572,47 @@
   }
   .count.hidden {
     display: none;
+  }
+  /* Amber like the permission notice, so it reads as "needs attention" in
+     light and dark, over glass or blur. The pause glyph turns into play on
+     hover and focus: the click resumes. Never shrinks or leaves the bar. */
+  .paused {
+    --amber: #c25e00;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px 0 10px;
+    border: none;
+    border-radius: 14px;
+    background: rgba(255, 159, 10, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(255, 159, 10, 0.35);
+    color: var(--label);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex: none;
+  }
+  .paused:hover {
+    background: rgba(255, 159, 10, 0.3);
+  }
+  .paused .glyph {
+    display: flex;
+    color: var(--amber);
+  }
+  .paused .hover,
+  .paused:hover .idle,
+  .paused:focus-visible .idle {
+    display: none;
+  }
+  .paused:hover .hover,
+  .paused:focus-visible .hover {
+    display: flex;
+  }
+  @media (prefers-color-scheme: dark) {
+    .paused {
+      --amber: #ffb340;
+    }
   }
   .actions {
     display: flex;

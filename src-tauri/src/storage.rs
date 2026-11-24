@@ -5,8 +5,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use satchel_core::{
-    ClipContent, ClipId, ClipSummary, InsertOutcome, Millis, NewClip, Pinboard, PinboardId, Query,
-    Result, Settings, Store,
+    ClipContent, ClipId, ClipSummary, InsertOutcome, LinkPreviewJob, LinkPreviewOutcome, Millis,
+    NewClip, Pinboard, PinboardId, Query, Result, Settings, Store,
 };
 
 pub trait ClipStore: Send {
@@ -27,6 +27,15 @@ pub trait ClipStore: Send {
     fn unpin(&mut self, clip: ClipId, pinboard: PinboardId) -> Result<()>;
     fn settings(&self) -> Result<Settings>;
     fn save_settings(&mut self, settings: &Settings) -> Result<()>;
+    fn window_state(&self, name: &str) -> Result<Option<String>>;
+    fn save_window_state(&mut self, name: &str, value: &str) -> Result<()>;
+    fn queue_link_preview(&mut self, id: ClipId, now: Millis) -> Result<bool>;
+    fn queue_link_backfill(&mut self, now: Millis) -> Result<Option<ClipId>>;
+    fn claim_link_preview(&mut self, now: Millis, lease_ms: Millis) -> Result<Option<LinkPreviewJob>>;
+    fn next_link_preview_at(&self) -> Result<Option<Millis>>;
+    fn finish_link_preview(&mut self, id: ClipId, outcome: LinkPreviewOutcome, now: Millis) -> Result<bool>;
+    fn link_preview_image(&self, id: ClipId) -> Result<Option<Vec<u8>>>;
+    fn clear_link_previews(&mut self) -> Result<u64>;
 }
 
 impl ClipStore for Store {
@@ -80,6 +89,33 @@ impl ClipStore for Store {
     }
     fn save_settings(&mut self, settings: &Settings) -> Result<()> {
         Store::save_settings(self, settings)
+    }
+    fn window_state(&self, name: &str) -> Result<Option<String>> {
+        Store::window_state(self, name)
+    }
+    fn save_window_state(&mut self, name: &str, value: &str) -> Result<()> {
+        Store::save_window_state(self, name, value)
+    }
+    fn queue_link_preview(&mut self, id: ClipId, now: Millis) -> Result<bool> {
+        Store::queue_link_preview(self, id, now)
+    }
+    fn queue_link_backfill(&mut self, now: Millis) -> Result<Option<ClipId>> {
+        Store::queue_link_backfill(self, now)
+    }
+    fn claim_link_preview(&mut self, now: Millis, lease_ms: Millis) -> Result<Option<LinkPreviewJob>> {
+        Store::claim_link_preview(self, now, lease_ms)
+    }
+    fn next_link_preview_at(&self) -> Result<Option<Millis>> {
+        Store::next_link_preview_at(self)
+    }
+    fn finish_link_preview(&mut self, id: ClipId, outcome: LinkPreviewOutcome, now: Millis) -> Result<bool> {
+        Store::finish_link_preview(self, id, outcome, now)
+    }
+    fn link_preview_image(&self, id: ClipId) -> Result<Option<Vec<u8>>> {
+        Store::link_preview_image(self, id)
+    }
+    fn clear_link_previews(&mut self) -> Result<u64> {
+        Store::clear_link_previews(self)
     }
 }
 

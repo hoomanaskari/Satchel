@@ -16,3 +16,8 @@ rusqlite = { version = "0.43", default-features = false, features = ["bundled", 
 # index on the hash is a sound dedup key and duplicates never need a blob
 # re-read. RustCrypto, pure Rust, already in the workspace through Tauri.
 sha2 = "0.11"
+# WHATWG URL parsing for link previews (`link.rs`): host normalization
+# (IDNA, dotted/hex IPv4 forms become IP hosts), relative URL resolution and
+# query parsing are exactly where a hand-written parser would let an unsafe
+# link through. Already in the workspace through Tauri.
+url = "2"

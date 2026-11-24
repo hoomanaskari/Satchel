@@ -257,6 +257,7 @@ fn live_paste_into_frontmost_app() {
         previous_app: std::sync::Mutex::new(Some(pid)),
         paste_lock: Default::default(),
         accessibility_prompted: Default::default(),
+        link_wake: Default::default(),
     };
     let content = h.ctx.store.lock().content(id).unwrap().unwrap();
     let new = satchel_core::NewClip {

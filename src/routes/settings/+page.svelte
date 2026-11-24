@@ -82,10 +82,9 @@
     background: var(--panel-solid);
     display: flex;
     flex-direction: column;
-    padding-top: 14px;
   }
   .error {
-    margin: 0 20px 8px;
+    margin: 12px 20px 0;
     color: var(--danger);
     font-size: 12px;
   }

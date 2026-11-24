@@ -96,6 +96,10 @@ export async function getClipThumbnail(id: ClipId): Promise<Uint8Array> {
   return bytes(await call("get_clip_thumbnail", { id }));
 }
 
+export async function getLinkImage(id: ClipId): Promise<Uint8Array> {
+  return bytes(await call("get_link_image", { id }));
+}
+
 export const pasteClip = (id: ClipId, plainText: boolean): Promise<void> => call("paste_clip", { id, plainText });
 export const pasteClips = (ids: ClipId[], plainText: boolean): Promise<void> =>
   call("paste_clips", { ids, plainText });
@@ -141,6 +145,7 @@ export const api = {
   listClips,
   getClipText,
   getClipThumbnail,
+  getLinkImage,
   pasteClip,
   pasteClips,
   copyClip,
