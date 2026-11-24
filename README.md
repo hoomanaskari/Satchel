@@ -10,8 +10,11 @@
 
 Satchel keeps a searchable history of what you copy. Press a shortcut, and a shelf slides up from the bottom of the screen: pick a clip and it pastes into the app you were using. Your history stays on your Mac.
 
-<!-- SCREENSHOT PLACEHOLDER: add a screenshot of the shelf here before release, e.g.
-     ![The Satchel shelf](docs/images/shelf.png) -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/shelf-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/shelf.png" />
+  <img src="docs/images/shelf.png" alt="The Satchel shelf: a translucent panel along the bottom of the screen with a search field, History and Ideas pinboards, filters for Text, Links, Code, Images, Colors and Files, and Paste buttons, above a row of clip cards from Safari (a link with its preview), Notes (text), Xcode (code), Figma (a color), Preview (an image) and Finder (a PDF file)." />
+</picture>
 
 > **Status: early.** Satchel 0.1 is the first public version, for **macOS 11 (Big Sur) or later on Apple silicon** (M1 or newer).
 > The code is laid out for Windows and Linux too, but those versions aren't built or tested yet.
