@@ -2,12 +2,18 @@
 
 **A fast, private clipboard manager for macOS.** Free and open source (MIT).
 
+<p align="center">
+  <a href="https://github.com/hoomanaskari/Satchel/releases/latest">
+    <img src="https://img.shields.io/badge/Download_for_Mac-DMG-black?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac" />
+  </a>
+</p>
+
 Satchel keeps a searchable history of what you copy. Press a shortcut, and a shelf slides up from the bottom of the screen: pick a clip and it pastes into the app you were using. Your history stays on your Mac.
 
 <!-- SCREENSHOT PLACEHOLDER: add a screenshot of the shelf here before release, e.g.
      ![The Satchel shelf](docs/images/shelf.png) -->
 
-> **Status: early.** Satchel 0.1 is the first public version, for **macOS 11 (Big Sur) or later**.
+> **Status: early.** Satchel 0.1 is the first public version, for **macOS 11 (Big Sur) or later on Apple silicon** (M1 or newer).
 > The code is laid out for Windows and Linux too, but those versions aren't built or tested yet.
 
 ## Download
