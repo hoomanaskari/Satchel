@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "satchel"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "block2",
  "objc2",
@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "satchel-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "rusqlite",
  "serde",

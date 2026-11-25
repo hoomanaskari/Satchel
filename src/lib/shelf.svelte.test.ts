@@ -362,6 +362,130 @@ describe("pin, delete, rename", () => {
   });
 });
 
+describe("deleting while scrolled along the row", () => {
+  // The view scrolls only to reveal the focused card (or to the start on
+  // resetTick), so "the row stays put" means: no reset, and the focus lands
+  // on the clip that took the deleted clip's place.
+  const ids = () => shelf.clips.map((c) => c.id);
+
+  it("Cmd+Backspace selects the clip that takes the deleted clip's place, not the first", async () => {
+    const order = ids();
+    shelf.select(order[10], "single");
+    const tick = shelf.resetTick;
+    await shelf.run({ type: "delete" });
+    await flush();
+    expect(shelf.clips.some((c) => c.id === order[10])).toBe(false);
+    expect(shelf.selection).toEqual({ ids: [order[11]], anchor: order[11], focus: order[11] });
+    expect(shelf.order.indexOf(order[11])).toBe(10);
+    expect(shelf.resetTick).toBe(tick);
+  });
+
+  it("a multi-selection selects the clip in the first deleted clip's place", async () => {
+    const order = ids();
+    shelf.select(order[8], "single");
+    shelf.select(order[12], "toggle");
+    await shelf.deleteSelected();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[9]]);
+    expect(shelf.order.indexOf(order[9])).toBe(8);
+  });
+
+  it("deleting the last card selects the one before it", async () => {
+    while (shelf.hasMore) await shelf.loadMoreIfNeeded(shelf.clips.length);
+    const order = ids();
+    expect(order.length).toBeGreaterThan(100);
+    shelf.edge(true);
+    await shelf.deleteSelected();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[order.length - 2]]);
+  });
+
+  it("with a search active, the neighbour in the results is selected", async () => {
+    shelf.setText("e");
+    await shelf.flushSearch();
+    const order = ids();
+    expect(order.length).toBeGreaterThan(6);
+    shelf.select(order[5], "single");
+    const tick = shelf.resetTick;
+    await shelf.deleteSelected();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[6]]);
+    expect(shelf.resetTick).toBe(tick);
+  });
+
+  it("inside a pinboard, the neighbour on that pinboard is selected", async () => {
+    for (const c of shelf.clips.slice(5, 10)) await shelf.togglePinboard(c.id, 1);
+    await shelf.setTab(1);
+    const order = ids();
+    expect(order.length).toBeGreaterThan(4);
+    shelf.select(order[2], "single");
+    await shelf.deleteSelected();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[3]]);
+  });
+
+  it("a delete that brings in the next page keeps the selection on the neighbour", async () => {
+    const order = ids();
+    shelf.select(order[18], "single");
+    await shelf.deleteSelected();
+    await shelf.loadMoreIfNeeded(shelf.clips.length);
+    await flush();
+    expect(shelf.clips.length).toBeGreaterThan(19);
+    expect(shelf.selection.ids).toEqual([order[19]]);
+  });
+
+  it("a delete reported by the backend selects the neighbour, or leaves the selection alone", async () => {
+    const order = ids();
+    shelf.select(order[10], "single");
+    await mock.transport.invoke("delete_clip", { id: order[10] });
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[11]]);
+    // Another clip deleted elsewhere: the selection stays where it is.
+    await mock.transport.invoke("delete_clip", { id: order[3] });
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[11]]);
+  });
+
+  it("clips pruned by the history limits do not move the selection to the first clip", async () => {
+    const order = ids();
+    shelf.select(order[15], "single");
+    const tick = shelf.resetTick;
+    mock.simulatePrune([order[2]]);
+    await flush();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[15]]);
+    mock.simulatePrune([order[15]]);
+    await flush();
+    await flush();
+    expect(shelf.clips.some((c) => c.id === order[15])).toBe(false);
+    expect(shelf.selection.ids).toEqual([order[16]]);
+    expect(shelf.resetTick).toBe(tick);
+  });
+
+  it("rename, pin and a new capture keep the selection and do not reset the row", async () => {
+    const order = ids();
+    shelf.select(order[12], "single");
+    const tick = shelf.resetTick;
+    await shelf.rename(order[12], "Renamed");
+    await shelf.togglePin();
+    await shelf.togglePin();
+    mock.simulateCopy("captured while open");
+    await flush();
+    await flush();
+    expect(shelf.selection.ids).toEqual([order[12]]);
+    expect(shelf.resetTick).toBe(tick);
+  });
+
+  it("filters, search and pinboards still start the row over", async () => {
+    const tick = shelf.resetTick;
+    await shelf.setKind("code");
+    await shelf.setTab(1);
+    shelf.setText("x");
+    await shelf.flushSearch();
+    expect(shelf.resetTick).toBe(tick + 3);
+  });
+});
+
 describe("pinboards", () => {
   it("creates (and opens), renames and deletes pinboards", async () => {
     const p = await shelf.createPinboard("  Recipes ");

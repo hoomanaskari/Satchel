@@ -61,12 +61,33 @@ export function ordered(s: Selection, order: ClipId[]): ClipId[] {
   return order.filter((id) => set.has(id));
 }
 
-/** Drop ids that left the list; select the first clip if nothing remains. */
-export function prune(s: Selection, order: ClipId[]): Selection {
+/**
+ * The clip that takes the place of `prev[at]` once only `present` remain:
+ * the next survivor after it, else the nearest one before it.
+ */
+function neighbour(prev: ClipId[], at: number, present: Set<ClipId>): ClipId | null {
+  for (let i = at; i < prev.length; i++) if (present.has(prev[i])) return prev[i];
+  for (let i = at - 1; i >= 0; i--) if (present.has(prev[i])) return prev[i];
+  return null;
+}
+
+/**
+ * Drop ids that left the list. When nothing selected remains, select the
+ * clip that took the first selected clip's place in `prev` (the order before
+ * the change), so the selection, and the view that follows it, stays where
+ * it was; without `prev`, or with none of it left, the first clip.
+ */
+export function prune(s: Selection, order: ClipId[], prev: ClipId[] = []): Selection {
   const present = new Set(order);
   if (s.ids.every((id) => present.has(id)) && (s.ids.length > 0 || order.length === 0)) return s;
   const ids = s.ids.filter((id) => present.has(id));
-  if (ids.length === 0) return order.length ? single(order[0]) : empty();
+  if (ids.length === 0) {
+    if (order.length === 0) return empty();
+    const was = new Set(s.ids);
+    const at = prev.findIndex((id) => was.has(id));
+    const next = at < 0 ? null : neighbour(prev, at, present);
+    return single(next ?? order[0]);
+  }
   const last = ids[ids.length - 1];
   return {
     ids,
@@ -75,13 +96,14 @@ export function prune(s: Selection, order: ClipId[]): Selection {
   };
 }
 
-/** Selection after `removed` leave `order` (the order before removal). */
-export function afterRemoval(_s: Selection, removed: ClipId[], order: ClipId[]): Selection {
+/**
+ * Selection after `removed` leave `order` (the order before removal): what
+ * is still selected stays selected; if the whole selection went, the clip
+ * now at the first removed selected clip's index, or the new last one.
+ * Ids already gone from `order` change nothing.
+ */
+export function afterRemoval(s: Selection, removed: ClipId[], order: ClipId[]): Selection {
   const gone = new Set(removed);
-  const first = order.findIndex((id) => gone.has(id));
-  const rest = order.filter((id) => !gone.has(id));
-  if (rest.length === 0) return empty();
-  // The clip now at the first removed clip's index, or the new last one.
-  const kept = order.slice(0, Math.max(0, first)).filter((id) => !gone.has(id)).length;
-  return single(rest[Math.min(kept, rest.length - 1)]);
+  if (!order.some((id) => gone.has(id))) return s;
+  return prune(s, order.filter((id) => !gone.has(id)), order);
 }

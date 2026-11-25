@@ -111,6 +111,8 @@ export class Shelf {
   /** Said when the shelf next opens (see `onCaptureSkipped`). */
   private pendingNotice: Notice | null = null;
   private previewToken = 0;
+  /** Clips this window is deleting; their `clips-changed` events are left to `deleteSelected`. */
+  private readonly deleting = new Set<ClipId>();
 
   constructor(opts: ShelfOptions) {
     this.api = opts.api;
@@ -332,10 +334,15 @@ export class Shelf {
     }
   }
 
-  /** Reload in place after a change, keeping the selection where possible. */
+  /**
+   * Reload in place after a change, keeping the selection where possible;
+   * a selected clip that went (pruned by the history limits, say) hands the
+   * selection to its neighbour, not to the first clip.
+   */
   private async refresh(): Promise<void> {
     this.now = this.clock();
-    if (await this.pager.refresh()) this.setSelection(sel.prune(this.selection, this.order), false);
+    const prev = this.order;
+    if (await this.pager.refresh()) this.setSelection(sel.prune(this.selection, this.order, prev), false);
   }
 
   async loadMoreIfNeeded(renderedEnd: number): Promise<void> {
@@ -533,16 +540,24 @@ export class Shelf {
     this.say(`${what} ${pin ? "pinned to" : "removed from"} ${board?.name ?? "pinboard"}`);
   }
 
+  /** Removes clips from the list; ids no longer in it change nothing (the selection least of all). */
   private removeLocally(ids: ClipId[]): void {
     const order = this.order;
-    const next = sel.afterRemoval(this.selection, ids, order);
-    this.pager.remove(ids);
+    const present = new Set(order);
+    const gone = ids.filter((id) => present.has(id));
+    if (gone.length === 0) return;
+    const next = sel.afterRemoval(this.selection, gone, order);
+    this.pager.remove(gone);
     this.setSelection(next);
   }
 
   async deleteSelected(): Promise<void> {
     const ids = this.selectedIds();
     if (ids.length === 0) return;
+    // Rust announces each delete (`clips-changed`, "deleted") before the
+    // command returns. Those are ours: the clips leave together below, so
+    // the selection goes to the clip in the first one's place.
+    for (const id of ids) this.deleting.add(id);
     await this.attempt(async () => {
       const done: ClipId[] = [];
       try {
@@ -551,6 +566,7 @@ export class Shelf {
           done.push(id);
         }
       } finally {
+        for (const id of ids) this.deleting.delete(id);
         if (done.length) this.removeLocally(done);
       }
       this.say(done.length === 1 ? "Deleted 1 clip" : `Deleted ${done.length} clips`);
@@ -669,7 +685,7 @@ export class Shelf {
       return;
     }
     if (p.reason === "deleted" && p.id != null) {
-      if (this.clips.some((c) => c.id === p.id)) this.removeLocally([p.id]);
+      if (!this.deleting.has(p.id)) this.removeLocally([p.id]);
       return;
     }
     await this.refresh();

@@ -1,6 +1,6 @@
 [package]
 name = "satchel-core"
-version = "0.1.4"
+version = "0.1.5"
 description = "Platform-independent core of Satchel: models, classification, privacy rules and storage"
 edition = "2024"
 license = "MIT"

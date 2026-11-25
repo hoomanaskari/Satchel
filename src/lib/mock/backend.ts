@@ -267,6 +267,8 @@ export interface MockBackend {
   count(): number;
   /** Pretend the user copied some text in another app. Returns the new id. */
   simulateCopy(text: string, app?: SourceApp): ClipId;
+  /** Pretend the history limits pruned these clips (Rust announces it without an id). */
+  simulatePrune(ids: ClipId[]): void;
   /** Pretend the user copied something over Satchel's size cap. */
   simulateOversizedCopy(kind: ClipKind, limitBytes: number): void;
   /** Pretend the global shortcut opened the shelf. */
@@ -555,6 +557,12 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       });
       emit("clips-changed", { reason: "inserted", id });
       return id;
+    },
+    simulatePrune(ids) {
+      const drop = new Set(ids);
+      const before = rows.length;
+      rows = rows.filter((r) => !drop.has(r.id));
+      if (rows.length !== before) emit("clips-changed", { reason: "deleted" });
     },
     simulateOversizedCopy(kind, limitBytes) {
       emit("capture-skipped", { kind, limitBytes });

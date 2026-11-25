@@ -87,6 +87,31 @@ describe("selection", () => {
     expect(sel.afterRemoval(sel.single(10), [10], [10])).toEqual(sel.empty());
   });
 
+  it("afterRemoval keeps the selection when nothing removed is in the list (already removed)", () => {
+    const s = sel.single(40);
+    expect(sel.afterRemoval(s, [30], [10, 20, 40, 50])).toBe(s);
+  });
+
+  it("afterRemoval keeps a selection the removal did not touch", () => {
+    const s = { ids: [20, 40], anchor: 20, focus: 40 };
+    expect(sel.afterRemoval(s, [30], order)).toBe(s);
+    expect(sel.afterRemoval(s, [40], order)).toEqual({ ids: [20], anchor: 20, focus: 20 });
+  });
+
+  it("afterRemoval of a scattered selection selects the clip in the first removed clip's place", () => {
+    expect(sel.afterRemoval({ ids: [20, 40], anchor: 20, focus: 40 }, [20, 40], order)).toEqual(sel.single(30));
+  });
+
+  it("prune with the previous order selects the neighbour of a vanished selection", () => {
+    // 40 vanished in a refresh: the next survivor after it, else the one before.
+    expect(sel.prune(sel.single(40), [10, 20, 30, 50], order)).toEqual(sel.single(50));
+    expect(sel.prune(sel.single(50), [10, 20, 30], order)).toEqual(sel.single(30));
+    // A reordered list (a new clip at the front) still follows the old neighbours.
+    expect(sel.prune(sel.single(30), [99, 10, 20, 40, 50], order)).toEqual(sel.single(40));
+    // Nothing of the old list left: the first clip.
+    expect(sel.prune(sel.single(30), [7, 8], order)).toEqual(sel.single(7));
+  });
+
   it("isSelected", () => {
     const s = { ids: [10, 30], anchor: 10, focus: 30 };
     expect(sel.isSelected(s, 30)).toBe(true);
